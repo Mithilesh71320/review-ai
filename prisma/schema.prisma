@@ -1,9 +1,3 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
-// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
-
 generator client {
   provider = "prisma-client"
   output   = "../src/generated/prisma"
@@ -11,30 +5,121 @@ generator client {
 
 datasource db {
   provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Sentiment {
+  POSITIVE
+  NEUTRAL
+  NEGATIVE
+}
+
+enum ReviewSource {
+  GOOGLE
+  YELP
+  FACEBOOK
+  TRIPADVISOR
+}
+
+enum AlertType {
+  NEGATIVE_REVIEW
+  RATING_DROP
+  TREND
+  POSITIVE_SPIKE
+}
+
+enum AlertSeverity {
+  HIGH
+  MEDIUM
+  LOW
 }
 
 model Business {
   id        String   @id @default(uuid())
+  userId    String   @unique
   name      String
-  placeId   String   @unique
+  email     String?
+  phone     String?
+  website   String?
+  placeId   String?  @unique
   createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
   reviews   Review[]
+  alerts    Alert[]
+  settings  BusinessSettings?
+  sources   SourceConnection[]
+  rules     AlertRule[]
 }
 
 model Review {
-  id         String   @id @default(uuid())
-  businessId String
-  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  text       String
-  rating     Int
-  sentiment  String?
-  createdAt  DateTime @default(now())
+  id          String       @id @default(uuid())
+  businessId  String
+  business    Business     @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  author      String
+  text        String
+  rating      Int
+  sentiment   Sentiment
+  source      ReviewSource
+  externalRef String?
+  createdAt   DateTime     @default(now())
 
-  @@index([businessId])
+  @@index([businessId, createdAt(sort: Desc)])
+  @@unique([businessId, source, externalRef])
 }
 
 model Alert {
-  id        String   @id @default(uuid())
-  message   String
-  createdAt DateTime @default(now())
+  id          String        @id @default(uuid())
+  businessId  String
+  business    Business      @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  type        AlertType
+  title       String
+  description String
+  severity    AlertSeverity
+  isRead      Boolean       @default(false)
+  createdAt   DateTime      @default(now())
+
+  @@index([businessId, createdAt(sort: Desc)])
+}
+
+model SourceConnection {
+  id         String       @id @default(uuid())
+  businessId String
+  business   Business     @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  source     ReviewSource
+  connected  Boolean      @default(false)
+  createdAt  DateTime     @default(now())
+  updatedAt  DateTime     @updatedAt
+
+  @@unique([businessId, source])
+  @@index([businessId])
+}
+
+model AlertRule {
+  id          String   @id @default(uuid())
+  businessId  String
+  business    Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  type        AlertType
+  name        String
+  description String
+  enabled     Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([businessId, type])
+  @@index([businessId])
+}
+
+model BusinessSettings {
+  id                 String   @id @default(uuid())
+  businessId         String   @unique
+  business           Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  emailNotifications Boolean  @default(true)
+  pushNotifications  Boolean  @default(true)
+  smsNotifications   Boolean  @default(false)
+  weeklyDigest       Boolean  @default(true)
+  autoRespond        Boolean  @default(true)
+  sentimentModel     String   @default("balanced")
+  analysisLanguage   String   @default("en")
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
 }
