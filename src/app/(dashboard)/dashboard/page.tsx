@@ -1,8 +1,294 @@
-export default function DashboardPage() {
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import {
+  Star,
+  TrendingDown,
+  TrendingUp,
+  MessageSquare,
+  AlertTriangle,
+} from "lucide-react";
+import {
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  Tooltip,
+  ResponsiveContainer,
+  PieChart,
+  Pie,
+  Cell,
+} from "recharts";
+
+type DashboardResponse = {
+  stats: {
+    averageRating: number;
+    totalReviews: number;
+    newToday: number;
+    activeAlerts: number;
+    monthlyDelta: number;
+    weeklyDelta: number;
+    sentimentTodayText: string;
+    activeAlertsText: string;
+  };
+  trend: Array<{ month: string; rating: number }>;
+  sentiment: Array<{ name: string; value: number; color: string }>;
+  recentReviews: Array<{
+    id: string;
+    text: string;
+    rating: number;
+    sentiment: string;
+    time: string;
+  }>;
+};
+
+function StarRating({ rating }: { rating: number }) {
   return (
-    <section>
-      <h2 className="text-2xl font-semibold">Dashboard</h2>
-      <p className="mt-2 text-sm text-slate-600">Overview of review monitoring activity.</p>
-    </section>
+    <div className="flex gap-0.5">
+      {Array.from({ length: 5 }, (_, i) => (
+        <Star
+          key={i}
+          className={`h-3.5 w-3.5 ${i < rating ? "fill-warning text-warning" : "text-muted-foreground/30"}`}
+        />
+      ))}
+    </div>
+  );
+}
+
+function SentimentBadge({ sentiment }: { sentiment: string }) {
+  const variant =
+    sentiment === "positive"
+      ? "default"
+      : sentiment === "negative"
+        ? "destructive"
+        : "secondary";
+  return <Badge variant={variant}>{sentiment}</Badge>;
+}
+
+export default function DashboardPage() {
+  const [data, setData] = useState<DashboardResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const load = async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const res = await fetch("/api/dashboard", { cache: "no-store" });
+        if (!res.ok) {
+          throw new Error("Failed to load dashboard");
+        }
+        const payload = (await res.json()) as DashboardResponse;
+        setData(payload);
+      } catch (err) {
+        const message =
+          err instanceof Error ? err.message : "Failed to load dashboard";
+        setError(message);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    void load();
+  }, []);
+
+  const stats = data?.stats;
+  const trend = data?.trend ?? [];
+  const sentiment = data?.sentiment ?? [];
+  const recentReviews = data?.recentReviews ?? [];
+
+  const monthlyTrendIcon = useMemo(() => {
+    if (!stats || stats.monthlyDelta < 0) {
+      return <TrendingDown className="h-3 w-3 text-destructive" />;
+    }
+    return <TrendingUp className="h-3 w-3 text-success" />;
+  }, [stats]);
+
+  if (loading) {
+    return <div className="text-sm text-muted-foreground">Loading dashboard...</div>;
+  }
+
+  if (error || !data) {
+    return (
+      <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-4 text-sm text-destructive">
+        {error ?? "Unable to load dashboard"}
+      </div>
+    );
+  }
+
+  const safeStats = data.stats;
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h1 className="text-3xl font-bold tracking-tight text-foreground">
+          Dashboard
+        </h1>
+        <p className="text-muted-foreground">
+          Overview of your review monitoring activity.
+        </p>
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between pb-2">
+            <CardTitle className="text-sm font-medium">Average Rating</CardTitle>
+            <Star className="h-4 w-4 text-warning" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{safeStats.averageRating}</div>
+            <p className="text-xs text-muted-foreground flex items-center gap-1">
+              {monthlyTrendIcon}
+              <span className={safeStats.monthlyDelta < 0 ? "text-destructive" : "text-success"}>
+                {safeStats.monthlyDelta > 0 ? "+" : ""}
+                {safeStats.monthlyDelta}
+              </span>{" "}
+              from baseline
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between pb-2">
+            <CardTitle className="text-sm font-medium">Total Reviews</CardTitle>
+            <MessageSquare className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{safeStats.totalReviews}</div>
+            <p className="text-xs text-muted-foreground flex items-center gap-1">
+              <TrendingUp className="h-3 w-3 text-success" />
+              <span className="text-success">
+                {safeStats.weeklyDelta > 0 ? "+" : ""}
+                {safeStats.weeklyDelta}
+              </span>{" "}
+              this week
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between pb-2">
+            <CardTitle className="text-sm font-medium">New Today</CardTitle>
+            <MessageSquare className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{safeStats.newToday}</div>
+            <p className="text-xs text-muted-foreground">
+              {safeStats.sentimentTodayText}
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between pb-2">
+            <CardTitle className="text-sm font-medium">Active Alerts</CardTitle>
+            <AlertTriangle className="h-4 w-4 text-warning" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{safeStats.activeAlerts}</div>
+            <p className="text-xs text-destructive">{safeStats.activeAlertsText}</p>
+          </CardContent>
+        </Card>
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-2">
+        <Card>
+          <CardHeader>
+            <CardTitle>Rating Trend</CardTitle>
+            <CardDescription>Average rating over the last 6 months</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <ResponsiveContainer width="100%" height={250}>
+              <BarChart data={trend}>
+                <XAxis dataKey="month" fontSize={12} tickLine={false} axisLine={false} />
+                <YAxis domain={[0, 5]} fontSize={12} tickLine={false} axisLine={false} />
+                <Tooltip />
+                <Bar dataKey="rating" fill="hsl(221, 83%, 53%)" radius={[4, 4, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Sentiment Breakdown</CardTitle>
+            <CardDescription>Distribution of review sentiments</CardDescription>
+          </CardHeader>
+          <CardContent className="flex items-center justify-center">
+            <div className="flex items-center gap-8">
+              <ResponsiveContainer width={180} height={180}>
+                <PieChart>
+                  <Pie
+                    data={sentiment}
+                    cx="50%"
+                    cy="50%"
+                    innerRadius={50}
+                    outerRadius={80}
+                    dataKey="value"
+                  >
+                    {sentiment.map((entry) => (
+                      <Cell key={entry.name} fill={entry.color} />
+                    ))}
+                  </Pie>
+                  <Tooltip />
+                </PieChart>
+              </ResponsiveContainer>
+              <div className="space-y-2">
+                {sentiment.map((item) => (
+                  <div key={item.name} className="flex items-center gap-2 text-sm">
+                    <div
+                      className="h-3 w-3 rounded-full"
+                      style={{ backgroundColor: item.color }}
+                    />
+                    <span className="text-muted-foreground">{item.name}</span>
+                    <span className="font-medium text-foreground">{item.value}%</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Recent Reviews</CardTitle>
+          <CardDescription>Latest customer reviews from backend data</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="space-y-4">
+            {recentReviews.map((review) => (
+              <div
+                key={review.id}
+                className="flex items-start justify-between border-b border-border pb-4 last:border-0 last:pb-0"
+              >
+                <div className="space-y-1 flex-1">
+                  <div className="flex items-center gap-2">
+                    <StarRating rating={review.rating} />
+                    <SentimentBadge sentiment={review.sentiment} />
+                  </div>
+                  <p className="text-sm text-foreground">&ldquo;{review.text}&rdquo;</p>
+                  <p className="text-xs text-muted-foreground">
+                    {new Date(review.time).toLocaleString()}
+                  </p>
+                </div>
+              </div>
+            ))}
+            {recentReviews.length === 0 && (
+              <p className="text-sm text-muted-foreground">No reviews yet.</p>
+            )}
+          </div>
+        </CardContent>
+      </Card>
+    </div>
   );
 }
