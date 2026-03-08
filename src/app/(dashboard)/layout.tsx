@@ -1,43 +1,25 @@
-import type { ReactNode } from "react";
-import Link from "next/link";
-import { RedirectToSignIn, SignedIn, SignedOut } from "@clerk/nextjs";
+import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
+import { AppSidebar } from "@/components/app-sidebar";
 
-const navItems = [
-  { href: "/dashboard", label: "Dashboard" },
-  { href: "/reviews", label: "Reviews" },
-  { href: "/alerts", label: "Alerts" },
-  { href: "/settings", label: "Settings" },
-];
-
-export default function ProtectedLayout({ children }: { children: ReactNode }) {
+export default function DashboardLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
   return (
-    <>
-      <SignedOut>
-        <RedirectToSignIn />
-      </SignedOut>
-
-      <SignedIn>
-        <div className="min-h-screen bg-slate-100 text-slate-900">
-          <div className="mx-auto flex max-w-6xl flex-col gap-6 p-6 lg:flex-row">
-            <aside className="w-full rounded-2xl bg-white p-5 shadow-sm lg:w-64">
-              <h1 className="mb-5 text-xl font-bold">Review AI</h1>
-              <nav className="space-y-2">
-                {navItems.map((item) => (
-                  <Link
-                    key={item.href}
-                    href={item.href}
-                    className="block rounded-lg px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-100"
-                  >
-                    {item.label}
-                  </Link>
-                ))}
-              </nav>
-            </aside>
-
-            <main className="flex-1 rounded-2xl bg-white p-6 shadow-sm">{children}</main>
-          </div>
+    <SidebarProvider>
+      <div className="min-h-screen flex w-full">
+        <AppSidebar />
+        <div className="flex-1 flex flex-col">
+          <header className="h-14 flex items-center border-b px-4 bg-background">
+            <SidebarTrigger className="mr-4" />
+            <span className="text-lg font-semibold text-foreground">
+              Review AI
+            </span>
+          </header>
+          <main className="flex-1 p-6 bg-muted/30">{children}</main>
         </div>
-      </SignedIn>
-    </>
+      </div>
+    </SidebarProvider>
   );
 }
