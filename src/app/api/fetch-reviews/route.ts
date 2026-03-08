@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
-import { prisma } from "@/lib/prisma";
+import { reviewMonitoringService } from "@/server/services/review-monitoring.service";
 
 type GoogleReview = {
   author_name?: string;
@@ -71,47 +71,13 @@ export async function POST(req: Request) {
     );
   }
 
-  const business = await prisma.business.upsert({
-    where: { placeId },
-    update: {
-      name: body.businessName?.trim() || data.result.name || "Unknown Business",
-    },
-    create: {
-      placeId,
-      name: body.businessName?.trim() || data.result.name || "Unknown Business",
-    },
-  });
-
-  const reviews = data.result.reviews ?? [];
-
-  const savedReviews = await Promise.all(
-    reviews
-      .filter((review) => review.text && typeof review.rating === "number")
-      .map((review) =>
-        prisma.review.create({
-          data: {
-            businessId: business.id,
-            text: review.text as string,
-            rating: review.rating as number,
-            sentiment: null,
-          },
-        }),
-      ),
+  const result = await reviewMonitoringService.ingestGoogleReviews(
+    userId,
+    placeId,
+    body.businessName || data.result.name,
+    data.result.reviews ?? [],
+    data.result.rating,
   );
 
-  return NextResponse.json({
-    business: {
-      id: business.id,
-      name: business.name,
-      placeId: business.placeId,
-      rating: data.result.rating ?? null,
-    },
-    reviews: reviews.map((review) => ({
-      author: review.author_name ?? "Anonymous",
-      text: review.text ?? "",
-      rating: review.rating ?? null,
-      date: review.time ? new Date(review.time * 1000).toISOString() : null,
-    })),
-    storedCount: savedReviews.length,
-  });
+  return NextResponse.json(result);
 }

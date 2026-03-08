@@ -3,17 +3,8 @@
 import { SignOutButton } from '@clerk/nextjs';
 import { Show } from '@clerk/nextjs';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
 
 export default function SignOutPage() {
-  const router = useRouter();
-
-  const handleSignOut = () => {
-    setTimeout(() => {
-      router.push('/');
-    }, 1000);
-  };
-
   return (
     <>
       <Show when="signed-in" fallback={null}>
