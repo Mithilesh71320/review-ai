@@ -1,6 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
+import {
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import {
   Card,
   CardContent,
@@ -17,6 +22,8 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
+import { fetchJson } from "@/lib/api";
+import { queryKeys } from "@/lib/query-keys";
 
 type AlertsResponse = {
   unreadCount: number;
@@ -56,54 +63,45 @@ function AlertIcon({ type }: { type: string }) {
 }
 
 export default function AlertsPage() {
-  const [data, setData] = useState<AlertsResponse | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [savingRule, setSavingRule] = useState<string | null>(null);
+  const queryClient = useQueryClient();
+  const { data, isPending, error } = useQuery({
+    queryKey: queryKeys.alerts,
+    queryFn: () => fetchJson<AlertsResponse>("/api/alerts", { cache: "no-store" }),
+  });
 
-  const load = async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await fetch("/api/alerts", { cache: "no-store" });
-      if (!res.ok) {
-        throw new Error("Failed to load alerts");
-      }
-      const payload = (await res.json()) as AlertsResponse;
-      setData(payload);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Failed to load alerts";
-      setError(message);
-    } finally {
-      setLoading(false);
-    }
+  const refreshAlerts = async () => {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: queryKeys.alerts }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.dashboard }),
+    ]);
   };
 
-  useEffect(() => {
-    void load();
-  }, []);
-
-  const handleMarkAllRead = async () => {
-    await fetch("/api/alerts", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "markAllRead" }),
-    });
-    await load();
-  };
+  const markAllReadMutation = useMutation({
+    mutationFn: () =>
+      fetchJson<{ ok: true }>("/api/alerts", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "markAllRead" }),
+      }),
+    onSuccess: refreshAlerts,
+  });
 
   const handleRuleToggle = async (
     type: AlertsResponse["rules"][number]["type"],
     enabled: boolean,
   ) => {
     setSavingRule(type);
-    await fetch("/api/alerts", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "toggleRule", type, enabled }),
-    });
-    setSavingRule(null);
-    await load();
+    try {
+      await fetchJson<{ ok: true }>("/api/alerts", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "toggleRule", type, enabled }),
+      });
+      await refreshAlerts();
+    } finally {
+      setSavingRule(null);
+    }
   };
 
   return (
@@ -115,20 +113,25 @@ export default function AlertsPage() {
           </h1>
           <p className="text-muted-foreground">Monitor and manage review alerts.</p>
         </div>
-        <Button variant="outline" className="gap-2" onClick={() => void handleMarkAllRead()}>
+        <Button
+          variant="outline"
+          className="gap-2"
+          disabled={markAllReadMutation.isPending}
+          onClick={() => void markAllReadMutation.mutateAsync()}
+        >
           <CheckCircle className="h-4 w-4" />
           Mark all read
         </Button>
       </div>
 
-      {loading && <div className="text-sm text-muted-foreground">Loading alerts...</div>}
+      {isPending && <div className="text-sm text-muted-foreground">Loading alerts...</div>}
       {error && (
         <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-4 text-sm text-destructive">
-          {error}
+          {error instanceof Error ? error.message : "Failed to load alerts"}
         </div>
       )}
 
-      {!loading && !error && data && (
+      {!isPending && !error && data && (
         <>
           <Card>
             <CardHeader>

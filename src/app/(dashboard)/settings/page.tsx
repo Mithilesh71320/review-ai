@@ -1,6 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
+import {
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import {
   Card,
   CardContent,
@@ -20,6 +25,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { fetchJson } from "@/lib/api";
+import { queryKeys } from "@/lib/query-keys";
 
 type SettingsResponse = {
   business: {
@@ -47,6 +54,32 @@ type SettingsResponse = {
   }>;
 };
 
+type GoogleBusinessesResponse = {
+  connected: boolean;
+  businesses: Array<{
+    accountName: string;
+    locationName: string;
+    title: string;
+    placeId: string | null;
+    address: string | null;
+    mapsUri: string | null;
+  }>;
+};
+
+type GooglePlaceSearchResponse = {
+  places: Array<{
+    placeId: string;
+    name: string;
+    address: string | null;
+    rating: number | null;
+    userRatingCount: number | null;
+  }>;
+};
+
+type GoogleOAuthStartResponse = {
+  authUrl: string;
+};
+
 const initialState: SettingsResponse = {
   business: {
     name: "",
@@ -70,79 +103,117 @@ const initialState: SettingsResponse = {
 };
 
 export default function SettingsPage() {
-  const [state, setState] = useState<SettingsResponse>(initialState);
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
+  const queryClient = useQueryClient();
+  const [draft, setDraft] = useState<SettingsResponse | null>(null);
   const [message, setMessage] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [placeSearchQuery, setPlaceSearchQuery] = useState("");
 
-  const load = async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await fetch("/api/settings", { cache: "no-store" });
-      if (!res.ok) {
-        throw new Error("Failed to load settings");
-      }
-      const payload = (await res.json()) as SettingsResponse;
-      setState(payload);
-    } catch (err) {
-      const text = err instanceof Error ? err.message : "Failed to load settings";
-      setError(text);
-    } finally {
-      setLoading(false);
-    }
+  const settingsQuery = useQuery({
+    queryKey: queryKeys.settings,
+    queryFn: () => fetchJson<SettingsResponse>("/api/settings", { cache: "no-store" }),
+  });
+
+  const googleBusinessesQuery = useQuery({
+    queryKey: queryKeys.googleBusinesses,
+    queryFn: () =>
+      fetchJson<GoogleBusinessesResponse>("/api/google/businesses", { cache: "no-store" }),
+  });
+
+  const placeSearchResultsQuery = useQuery({
+    queryKey: queryKeys.googlePlaceSearch(placeSearchQuery),
+    queryFn: () =>
+      fetchJson<GooglePlaceSearchResponse>(
+        `/api/google/places/search?query=${encodeURIComponent(placeSearchQuery)}`,
+        { cache: "no-store" },
+      ),
+    enabled: placeSearchQuery.trim().length >= 3,
+  });
+
+  const state = draft ?? settingsQuery.data ?? initialState;
+
+  const updateState = (updater: (current: SettingsResponse) => SettingsResponse) => {
+    setDraft((currentDraft) => updater(currentDraft ?? settingsQuery.data ?? initialState));
   };
 
-  useEffect(() => {
-    void load();
-  }, []);
-
-  const save = async () => {
-    setSaving(true);
-    setMessage(null);
-    setError(null);
-    try {
-      const res = await fetch("/api/settings", {
+  const saveMutation = useMutation({
+    mutationFn: () =>
+      fetchJson<{ ok: true }>("/api/settings", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(state),
-      });
-      if (!res.ok) {
-        throw new Error("Failed to save settings");
-      }
+      }),
+    onSuccess: async () => {
+      setDraft(null);
       setMessage("Settings saved.");
-      await load();
-    } catch (err) {
-      const text = err instanceof Error ? err.message : "Failed to save settings";
-      setError(text);
-    } finally {
-      setSaving(false);
-    }
+      await queryClient.invalidateQueries({ queryKey: queryKeys.settings });
+    },
+    onError: (error) => {
+      setMessage(error instanceof Error ? error.message : "Failed to save settings.");
+    },
+  });
+
+  const connectGoogleMutation = useMutation({
+    mutationFn: () =>
+      fetchJson<GoogleOAuthStartResponse>("/api/google/oauth/start", {
+        cache: "no-store",
+      }),
+    onSuccess: ({ authUrl }) => {
+      window.location.assign(authUrl);
+    },
+    onError: (error) => {
+      setMessage(error instanceof Error ? error.message : "Failed to start Google OAuth.");
+    },
+  });
+
+  const applyBusinessSelection = (business: { name: string; placeId: string }) => {
+    updateState((current) => ({
+      ...current,
+      business: {
+        ...current.business,
+        name: business.name,
+        placeId: business.placeId,
+      },
+      sources: current.sources.map((source) =>
+        source.key === "GOOGLE" ? { ...source, connected: true } : source,
+      ),
+    }));
+    setMessage(`Selected ${business.name} as the Google business.`);
   };
+
+  const isLoading = settingsQuery.isPending;
+  const settingsError =
+    settingsQuery.error instanceof Error ? settingsQuery.error.message : null;
+  const businessesError =
+    googleBusinessesQuery.error instanceof Error
+      ? googleBusinessesQuery.error.message
+      : null;
+  const placeSearchError =
+    placeSearchResultsQuery.error instanceof Error
+      ? placeSearchResultsQuery.error.message
+      : null;
 
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-3xl font-bold tracking-tight text-foreground">Settings</h1>
         <p className="text-muted-foreground">
-          Manage your account and application preferences.
+          Manage your account, Google business connection, and application preferences.
         </p>
       </div>
 
-      {loading && <div className="text-sm text-muted-foreground">Loading settings...</div>}
-      {error && (
+      {isLoading && <div className="text-sm text-muted-foreground">Loading settings...</div>}
+      {settingsError && (
         <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-4 text-sm text-destructive">
-          {error}
+          {settingsError}
         </div>
       )}
       {message && (
-        <div className="rounded-lg border border-success/40 bg-success/10 p-4 text-sm text-success">
+        <div className="rounded-lg border border-border bg-card p-4 text-sm text-foreground">
           {message}
         </div>
       )}
 
-      {!loading && (
+      {!isLoading && (
         <>
           <Card>
             <CardHeader>
@@ -157,9 +228,9 @@ export default function SettingsPage() {
                     id="business-name"
                     value={state.business.name}
                     onChange={(e) =>
-                      setState((prev) => ({
-                        ...prev,
-                        business: { ...prev.business, name: e.target.value },
+                      updateState((current) => ({
+                        ...current,
+                        business: { ...current.business, name: e.target.value },
                       }))
                     }
                   />
@@ -171,9 +242,9 @@ export default function SettingsPage() {
                     type="email"
                     value={state.business.email}
                     onChange={(e) =>
-                      setState((prev) => ({
-                        ...prev,
-                        business: { ...prev.business, email: e.target.value },
+                      updateState((current) => ({
+                        ...current,
+                        business: { ...current.business, email: e.target.value },
                       }))
                     }
                   />
@@ -184,9 +255,9 @@ export default function SettingsPage() {
                     id="phone"
                     value={state.business.phone}
                     onChange={(e) =>
-                      setState((prev) => ({
-                        ...prev,
-                        business: { ...prev.business, phone: e.target.value },
+                      updateState((current) => ({
+                        ...current,
+                        business: { ...current.business, phone: e.target.value },
                       }))
                     }
                   />
@@ -197,9 +268,9 @@ export default function SettingsPage() {
                     id="website"
                     value={state.business.website}
                     onChange={(e) =>
-                      setState((prev) => ({
-                        ...prev,
-                        business: { ...prev.business, website: e.target.value },
+                      updateState((current) => ({
+                        ...current,
+                        business: { ...current.business, website: e.target.value },
                       }))
                     }
                   />
@@ -210,13 +281,153 @@ export default function SettingsPage() {
                     id="placeId"
                     value={state.business.placeId}
                     onChange={(e) =>
-                      setState((prev) => ({
-                        ...prev,
-                        business: { ...prev.business, placeId: e.target.value },
+                      updateState((current) => ({
+                        ...current,
+                        business: { ...current.business, placeId: e.target.value },
                       }))
                     }
                   />
                 </div>
+              </div>
+
+              <Separator />
+
+              <div className="flex flex-wrap gap-3">
+                <Button
+                  variant="outline"
+                  disabled={connectGoogleMutation.isPending}
+                  onClick={() => {
+                    setMessage(null);
+                    void connectGoogleMutation.mutateAsync();
+                  }}
+                >
+                  {connectGoogleMutation.isPending
+                    ? "Connecting..."
+                    : "Connect Google Account"}
+                </Button>
+                <Button
+                  variant="secondary"
+                  disabled={googleBusinessesQuery.isFetching}
+                  onClick={() => void googleBusinessesQuery.refetch()}
+                >
+                  {googleBusinessesQuery.isFetching
+                    ? "Refreshing..."
+                    : "Refresh Google Businesses"}
+                </Button>
+              </div>
+
+              {businessesError && (
+                <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
+                  {businessesError}
+                </div>
+              )}
+
+              {googleBusinessesQuery.data?.connected === false && (
+                <div className="rounded-lg border border-warning/40 bg-warning/10 p-3 text-sm text-foreground">
+                  Google Business account is not connected yet. Use OAuth to load your
+                  business locations automatically.
+                </div>
+              )}
+
+              {googleBusinessesQuery.data?.businesses &&
+                googleBusinessesQuery.data.businesses.length > 0 && (
+                  <div className="space-y-3">
+                    <div>
+                      <p className="text-sm font-medium text-foreground">
+                        Businesses from your Google account
+                      </p>
+                      <p className="text-sm text-muted-foreground">
+                        Select one to populate the business name and Google Place ID.
+                      </p>
+                    </div>
+                    <div className="space-y-2">
+                      {googleBusinessesQuery.data.businesses.map((business) => (
+                        <button
+                          key={business.locationName}
+                          type="button"
+                          className="w-full rounded-lg border border-border bg-background px-4 py-3 text-left transition hover:border-primary/40 hover:bg-accent/30"
+                          onClick={() => {
+                            if (!business.placeId) {
+                              setMessage(
+                                `${business.title} does not expose a Google Place ID.`,
+                              );
+                              return;
+                            }
+
+                            applyBusinessSelection({
+                              name: business.title,
+                              placeId: business.placeId,
+                            });
+                          }}
+                        >
+                          <div className="flex items-center justify-between gap-4">
+                            <div>
+                              <p className="font-medium text-foreground">{business.title}</p>
+                              <p className="text-sm text-muted-foreground">
+                                {business.address ?? business.accountName}
+                              </p>
+                              <p className="text-xs text-muted-foreground">
+                                {business.placeId ?? "No place ID available"}
+                              </p>
+                            </div>
+                            <span className="text-sm text-primary">Use this</span>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+              <Separator />
+
+              <div className="space-y-3">
+                <div>
+                  <p className="text-sm font-medium text-foreground">Search Google Places</p>
+                  <p className="text-sm text-muted-foreground">
+                    Fallback when Business Profile locations are unavailable.
+                  </p>
+                </div>
+                <Input
+                  placeholder="Search by business name or address"
+                  value={placeSearchQuery}
+                  onChange={(event) => setPlaceSearchQuery(event.target.value)}
+                />
+                {placeSearchError && (
+                  <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
+                    {placeSearchError}
+                  </div>
+                )}
+                {placeSearchResultsQuery.isFetching && (
+                  <div className="text-sm text-muted-foreground">Searching places...</div>
+                )}
+                {placeSearchResultsQuery.data && placeSearchQuery.trim().length >= 3 && (
+                  <div className="space-y-2">
+                    {placeSearchResultsQuery.data.places.map((place) => (
+                      <button
+                        key={place.placeId}
+                        type="button"
+                        className="w-full rounded-lg border border-border bg-background px-4 py-3 text-left transition hover:border-primary/40 hover:bg-accent/30"
+                        onClick={() =>
+                          applyBusinessSelection({
+                            name: place.name,
+                            placeId: place.placeId,
+                          })
+                        }
+                      >
+                        <p className="font-medium text-foreground">{place.name}</p>
+                        <p className="text-sm text-muted-foreground">
+                          {place.address ?? "No address available"}
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          Place ID: {place.placeId}
+                        </p>
+                      </button>
+                    ))}
+                    {placeSearchResultsQuery.data.places.length === 0 && (
+                      <p className="text-sm text-muted-foreground">No places found.</p>
+                    )}
+                  </div>
+                )}
               </div>
             </CardContent>
           </Card>
@@ -241,9 +452,9 @@ export default function SettingsPage() {
                   <Switch
                     checked={source.connected}
                     onCheckedChange={(checked) =>
-                      setState((prev) => ({
-                        ...prev,
-                        sources: prev.sources.map((item) =>
+                      updateState((current) => ({
+                        ...current,
+                        sources: current.sources.map((item) =>
                           item.key === source.key
                             ? { ...item, connected: checked }
                             : item,
@@ -299,10 +510,10 @@ export default function SettingsPage() {
                       ]
                     }
                     onCheckedChange={(checked) =>
-                      setState((prev) => ({
-                        ...prev,
+                      updateState((current) => ({
+                        ...current,
                         notifications: {
-                          ...prev.notifications,
+                          ...current.notifications,
                           [item.key]: checked,
                         },
                       }))
@@ -324,9 +535,9 @@ export default function SettingsPage() {
                 <Select
                   value={state.ai.sentimentModel}
                   onValueChange={(value) =>
-                    setState((prev) => ({
-                      ...prev,
-                      ai: { ...prev.ai, sentimentModel: value },
+                    updateState((current) => ({
+                      ...current,
+                      ai: { ...current.ai, sentimentModel: value },
                     }))
                   }
                 >
@@ -346,9 +557,9 @@ export default function SettingsPage() {
                 <Select
                   value={state.ai.analysisLanguage}
                   onValueChange={(value) =>
-                    setState((prev) => ({
-                      ...prev,
-                      ai: { ...prev.ai, analysisLanguage: value },
+                    updateState((current) => ({
+                      ...current,
+                      ai: { ...current.ai, analysisLanguage: value },
                     }))
                   }
                 >
@@ -376,9 +587,9 @@ export default function SettingsPage() {
                 <Switch
                   checked={state.ai.autoRespond}
                   onCheckedChange={(checked) =>
-                    setState((prev) => ({
-                      ...prev,
-                      ai: { ...prev.ai, autoRespond: checked },
+                    updateState((current) => ({
+                      ...current,
+                      ai: { ...current.ai, autoRespond: checked },
                     }))
                   }
                 />
@@ -387,8 +598,14 @@ export default function SettingsPage() {
           </Card>
 
           <div className="flex justify-end">
-            <Button onClick={() => void save()} disabled={saving}>
-              {saving ? "Saving..." : "Save All Settings"}
+            <Button
+              onClick={() => {
+                setMessage(null);
+                void saveMutation.mutateAsync();
+              }}
+              disabled={saveMutation.isPending}
+            >
+              {saveMutation.isPending ? "Saving..." : "Save All Settings"}
             </Button>
           </div>
         </>

@@ -1,6 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
+import {
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import {
   Card,
   CardContent,
@@ -19,6 +24,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { fetchJson } from "@/lib/api";
+import { queryKeys } from "@/lib/query-keys";
 
 type ReviewsResponse = {
   reviews: Array<{
@@ -30,6 +37,13 @@ type ReviewsResponse = {
     source: string;
     createdAt: string;
   }>;
+};
+
+type SettingsResponse = {
+  business: {
+    name: string;
+    placeId: string;
+  };
 };
 
 function StarRating({ rating }: { rating: number }) {
@@ -56,34 +70,58 @@ function SentimentBadge({ sentiment }: { sentiment: string }) {
 }
 
 export default function ReviewsPage() {
-  const [data, setData] = useState<ReviewsResponse | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [sentiment, setSentiment] = useState("all");
   const [source, setSource] = useState("all");
+  const [fetchMessage, setFetchMessage] = useState<string | null>(null);
+  const queryClient = useQueryClient();
 
-  useEffect(() => {
-    const load = async () => {
-      setLoading(true);
-      setError(null);
-      try {
-        const res = await fetch("/api/reviews", { cache: "no-store" });
-        if (!res.ok) {
-          throw new Error("Failed to load reviews");
-        }
-        const payload = (await res.json()) as ReviewsResponse;
-        setData(payload);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : "Failed to load reviews";
-        setError(message);
-      } finally {
-        setLoading(false);
+  const { data, isPending, error } = useQuery({
+    queryKey: queryKeys.reviews,
+    queryFn: () => fetchJson<ReviewsResponse>("/api/reviews", { cache: "no-store" }),
+  });
+
+  const { data: settingsData } = useQuery({
+    queryKey: queryKeys.settings,
+    queryFn: () => fetchJson<SettingsResponse>("/api/settings", { cache: "no-store" }),
+  });
+
+  const fetchReviewsMutation = useMutation({
+    mutationFn: async () => {
+      if (!settingsData?.business.placeId) {
+        throw new Error("Add a Google Place ID in Settings before fetching reviews.");
       }
-    };
 
-    void load();
-  }, []);
+      return fetchJson<{ storedCount: number }>("/api/fetch-reviews", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          placeId: settingsData.business.placeId,
+          businessName: settingsData.business.name,
+        }),
+      });
+    },
+    onSuccess: async (payload) => {
+      setFetchMessage(
+        payload.storedCount > 0
+          ? `Fetched reviews successfully. ${payload.storedCount} new review(s) stored.`
+          : "Fetched reviews successfully. No new reviews were stored.",
+      );
+
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.reviews }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.dashboard }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.alerts }),
+      ]);
+    },
+    onError: (mutationError) => {
+      setFetchMessage(
+        mutationError instanceof Error
+          ? mutationError.message
+          : "Failed to fetch latest reviews.",
+      );
+    },
+  });
 
   const reviews = useMemo(() => {
     const all = data?.reviews ?? [];
@@ -110,6 +148,12 @@ export default function ReviewsPage() {
         <h1 className="text-3xl font-bold tracking-tight text-foreground">Reviews</h1>
         <p className="text-muted-foreground">Browse and manage all customer reviews.</p>
       </div>
+
+      {fetchMessage && (
+        <div className="rounded-lg border border-border bg-card px-4 py-3 text-sm text-foreground">
+          {fetchMessage}
+        </div>
+      )}
 
       <div className="flex flex-col sm:flex-row gap-4">
         <div className="relative flex-1">
@@ -147,16 +191,31 @@ export default function ReviewsPage() {
         <Button variant="outline" size="icon" aria-label="Filter">
           <Filter className="h-4 w-4" />
         </Button>
+        <Button
+          onClick={() => {
+            setFetchMessage(null);
+            void fetchReviewsMutation.mutateAsync();
+          }}
+          disabled={fetchReviewsMutation.isPending || !settingsData?.business.placeId}
+        >
+          {fetchReviewsMutation.isPending ? "Fetching..." : "Fetch Latest Reviews"}
+        </Button>
       </div>
 
-      {loading && <div className="text-sm text-muted-foreground">Loading reviews...</div>}
-      {error && (
-        <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-4 text-sm text-destructive">
-          {error}
+      {!settingsData?.business.placeId && (
+        <div className="rounded-lg border border-warning/40 bg-warning/10 px-4 py-3 text-sm text-foreground">
+          Configure a Google Place ID in Settings to fetch live reviews.
         </div>
       )}
 
-      {!loading && !error && (
+      {isPending && <div className="text-sm text-muted-foreground">Loading reviews...</div>}
+      {error && (
+        <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-4 text-sm text-destructive">
+          {error instanceof Error ? error.message : "Failed to load reviews"}
+        </div>
+      )}
+
+      {!isPending && !error && (
         <Card>
           <CardHeader>
             <CardTitle>All Reviews</CardTitle>

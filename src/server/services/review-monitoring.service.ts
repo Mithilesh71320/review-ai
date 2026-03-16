@@ -14,6 +14,51 @@ type GoogleReview = {
   time?: number;
 };
 
+type GoogleTokenRefreshResponse = {
+  access_token?: string;
+  expires_in?: number;
+  scope?: string;
+  token_type?: string;
+  error?: string;
+  error_description?: string;
+};
+
+type GoogleAccountListResponse = {
+  accounts?: Array<{
+    name: string;
+    accountName?: string;
+    type?: string;
+  }>;
+};
+
+type GoogleBusinessLocationsResponse = {
+  locations?: Array<{
+    name: string;
+    title?: string;
+    storefrontAddress?: {
+      addressLines?: string[];
+      locality?: string;
+      administrativeArea?: string;
+      postalCode?: string;
+    };
+    metadata?: {
+      placeId?: string;
+      mapsUri?: string;
+      newReviewUri?: string;
+    };
+  }>;
+};
+
+type GooglePlaceSearchResponse = {
+  places?: Array<{
+    id?: string;
+    displayName?: { text?: string };
+    formattedAddress?: string;
+    rating?: number;
+    userRatingCount?: number;
+  }>;
+};
+
 export class ReviewMonitoringService {
   async getDashboard(userId: string) {
     const workspace = await reviewMonitoringRepository.ensureWorkspace(userId);
@@ -237,6 +282,220 @@ export class ReviewMonitoringService {
     });
   }
 
+  async connectGoogleTokens(
+    userId: string,
+    tokens: {
+      accessToken: string;
+      refreshToken?: string;
+      expiresIn?: number;
+      tokenType?: string;
+      scope?: string;
+    },
+  ) {
+    const workspace = await reviewMonitoringRepository.ensureWorkspace(userId);
+    const expiresAt =
+      typeof tokens.expiresIn === "number"
+        ? new Date(Date.now() + tokens.expiresIn * 1000)
+        : null;
+
+    await reviewMonitoringRepository.updateSourceTokens(workspace.id, "GOOGLE", {
+      accessToken: tokens.accessToken,
+      refreshToken: tokens.refreshToken ?? undefined,
+      accessTokenExpiresAt: expiresAt,
+      tokenType: tokens.tokenType ?? null,
+      scope: tokens.scope ?? null,
+      connected: true,
+    });
+  }
+
+  async getValidGoogleAccessToken(userId: string) {
+    const workspace = await reviewMonitoringRepository.ensureWorkspace(userId);
+    const source = await reviewMonitoringRepository.getSourceConnection(
+      workspace.id,
+      "GOOGLE",
+    );
+
+    if (!source) {
+      return null;
+    }
+
+    const tokenLooksUsable =
+      source.accessToken &&
+      source.accessTokenExpiresAt &&
+      source.accessTokenExpiresAt.getTime() > Date.now() + 60_000;
+
+    if (tokenLooksUsable) {
+      return source.accessToken;
+    }
+
+    if (!source.refreshToken) {
+      return null;
+    }
+
+    const clientId = process.env.GOOGLE_OAUTH_CLIENT_ID;
+    const clientSecret = process.env.GOOGLE_OAUTH_CLIENT_SECRET;
+
+    if (!clientId || !clientSecret) {
+      throw new Error(
+        "Google OAuth client config missing. Set GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_CLIENT_SECRET.",
+      );
+    }
+
+    const refreshRes = await fetch("https://oauth2.googleapis.com/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        client_id: clientId,
+        client_secret: clientSecret,
+        refresh_token: source.refreshToken,
+        grant_type: "refresh_token",
+      }),
+      cache: "no-store",
+    });
+
+    const refreshData = (await refreshRes.json()) as GoogleTokenRefreshResponse;
+
+    if (!refreshRes.ok || !refreshData.access_token) {
+      await reviewMonitoringRepository.updateSourceTokens(workspace.id, "GOOGLE", {
+        connected: false,
+      });
+      return null;
+    }
+
+    const expiresAt = new Date(Date.now() + (refreshData.expires_in ?? 3600) * 1000);
+    await reviewMonitoringRepository.updateSourceTokens(workspace.id, "GOOGLE", {
+      accessToken: refreshData.access_token,
+      accessTokenExpiresAt: expiresAt,
+      tokenType: refreshData.token_type ?? "Bearer",
+      scope: refreshData.scope ?? source.scope,
+      connected: true,
+    });
+
+    return refreshData.access_token;
+  }
+
+  async listGoogleBusinesses(userId: string) {
+    const accessToken = await this.getValidGoogleAccessToken(userId);
+
+    if (!accessToken) {
+      return {
+        connected: false,
+        businesses: [] as Array<{
+          accountName: string;
+          locationName: string;
+          title: string;
+          placeId: string | null;
+          address: string | null;
+          mapsUri: string | null;
+        }>,
+      };
+    }
+
+    const accountsRes = await fetch(
+      "https://mybusinessaccountmanagement.googleapis.com/v1/accounts",
+      {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+        cache: "no-store",
+      },
+    );
+
+    if (!accountsRes.ok) {
+      throw new Error("Failed to fetch Google Business accounts.");
+    }
+
+    const accountsData = (await accountsRes.json()) as GoogleAccountListResponse;
+    const accounts = accountsData.accounts ?? [];
+
+    const locationResults = await Promise.all(
+      accounts.map(async (account) => {
+        const locationsRes = await fetch(
+          `https://mybusinessbusinessinformation.googleapis.com/v1/${account.name}/locations?readMask=name,title,storefrontAddress,metadata`,
+          {
+            headers: {
+              Authorization: `Bearer ${accessToken}`,
+            },
+            cache: "no-store",
+          },
+        );
+
+        if (!locationsRes.ok) {
+          return [];
+        }
+
+        const locationsData =
+          (await locationsRes.json()) as GoogleBusinessLocationsResponse;
+
+        return (locationsData.locations ?? []).map((location) => ({
+          accountName: account.accountName ?? account.name,
+          locationName: location.name,
+          title: location.title ?? "Untitled business",
+          placeId: location.metadata?.placeId ?? null,
+          mapsUri: location.metadata?.mapsUri ?? null,
+          address: this.formatStorefrontAddress(location.storefrontAddress),
+        }));
+      }),
+    );
+
+    return {
+      connected: true,
+      businesses: locationResults.flat(),
+    };
+  }
+
+  async searchGooglePlaces(query: string) {
+    const apiKey = process.env.GOOGLE_PLACES_API_KEY;
+
+    if (!apiKey) {
+      throw new Error("GOOGLE_PLACES_API_KEY is not configured.");
+    }
+
+    const trimmedQuery = query.trim();
+    if (!trimmedQuery) {
+      return { places: [] as Array<{
+        placeId: string;
+        name: string;
+        address: string | null;
+        rating: number | null;
+        userRatingCount: number | null;
+      }> };
+    }
+
+    const response = await fetch("https://places.googleapis.com/v1/places:searchText", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Goog-Api-Key": apiKey,
+        "X-Goog-FieldMask":
+          "places.id,places.displayName,places.formattedAddress,places.rating,places.userRatingCount",
+      },
+      body: JSON.stringify({
+        textQuery: trimmedQuery,
+        pageSize: 8,
+      }),
+      cache: "no-store",
+    });
+
+    if (!response.ok) {
+      throw new Error("Failed to search Google Places.");
+    }
+
+    const data = (await response.json()) as GooglePlaceSearchResponse;
+
+    return {
+      places: (data.places ?? [])
+        .filter((place): place is NonNullable<typeof place> & { id: string } => Boolean(place.id))
+        .map((place) => ({
+          placeId: place.id,
+          name: place.displayName?.text ?? "Unknown place",
+          address: place.formattedAddress ?? null,
+          rating: place.rating ?? null,
+          userRatingCount: place.userRatingCount ?? null,
+        })),
+    };
+  }
+
   async ingestGoogleReviews(
     userId: string,
     placeId: string,
@@ -387,6 +646,30 @@ export class ReviewMonitoringService {
   private makeExternalRef(review: GoogleReview) {
     const base = `${review.author_name ?? "anonymous"}|${review.time ?? "0"}|${review.text ?? ""}`;
     return crypto.createHash("sha256").update(base).digest("hex");
+  }
+
+  private formatStorefrontAddress(
+    address:
+      | {
+          addressLines?: string[];
+          locality?: string;
+          administrativeArea?: string;
+          postalCode?: string;
+        }
+      | undefined,
+  ) {
+    if (!address) {
+      return null;
+    }
+
+    const parts = [
+      ...(address.addressLines ?? []),
+      address.locality,
+      address.administrativeArea,
+      address.postalCode,
+    ].filter(Boolean);
+
+    return parts.length > 0 ? parts.join(", ") : null;
   }
 
   private prettyEnum(value: string) {

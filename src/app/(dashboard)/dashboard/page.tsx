@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
+import { useQuery } from "@tanstack/react-query";
 import {
   Card,
   CardContent,
@@ -27,6 +28,8 @@ import {
   Pie,
   Cell,
 } from "recharts";
+import { fetchJson } from "@/lib/api";
+import { queryKeys } from "@/lib/query-keys";
 
 type DashboardResponse = {
   stats: {
@@ -74,32 +77,10 @@ function SentimentBadge({ sentiment }: { sentiment: string }) {
 }
 
 export default function DashboardPage() {
-  const [data, setData] = useState<DashboardResponse | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    const load = async () => {
-      setLoading(true);
-      setError(null);
-      try {
-        const res = await fetch("/api/dashboard", { cache: "no-store" });
-        if (!res.ok) {
-          throw new Error("Failed to load dashboard");
-        }
-        const payload = (await res.json()) as DashboardResponse;
-        setData(payload);
-      } catch (err) {
-        const message =
-          err instanceof Error ? err.message : "Failed to load dashboard";
-        setError(message);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    void load();
-  }, []);
+  const { data, isPending, error } = useQuery({
+    queryKey: queryKeys.dashboard,
+    queryFn: () => fetchJson<DashboardResponse>("/api/dashboard", { cache: "no-store" }),
+  });
 
   const stats = data?.stats;
   const trend = data?.trend ?? [];
@@ -113,14 +94,14 @@ export default function DashboardPage() {
     return <TrendingUp className="h-3 w-3 text-success" />;
   }, [stats]);
 
-  if (loading) {
+  if (isPending) {
     return <div className="text-sm text-muted-foreground">Loading dashboard...</div>;
   }
 
   if (error || !data) {
     return (
       <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-4 text-sm text-destructive">
-        {error ?? "Unable to load dashboard"}
+        {error instanceof Error ? error.message : "Unable to load dashboard"}
       </div>
     );
   }

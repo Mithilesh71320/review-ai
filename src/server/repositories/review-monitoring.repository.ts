@@ -114,6 +114,47 @@ export class ReviewMonitoringRepository {
     });
   }
 
+  async getSourceConnection(businessId: string, source: ReviewSource) {
+    return prisma.sourceConnection.findUnique({
+      where: {
+        businessId_source: {
+          businessId,
+          source,
+        },
+      },
+    });
+  }
+
+  async updateSourceTokens(
+    businessId: string,
+    source: ReviewSource,
+    tokens: {
+      accessToken?: string | null;
+      refreshToken?: string | null;
+      accessTokenExpiresAt?: Date | null;
+      tokenType?: string | null;
+      scope?: string | null;
+      connected?: boolean;
+    },
+  ) {
+    return prisma.sourceConnection.update({
+      where: {
+        businessId_source: {
+          businessId,
+          source,
+        },
+      },
+      data: {
+        accessToken: tokens.accessToken,
+        refreshToken: tokens.refreshToken,
+        accessTokenExpiresAt: tokens.accessTokenExpiresAt,
+        tokenType: tokens.tokenType,
+        scope: tokens.scope,
+        connected: tokens.connected,
+      },
+    });
+  }
+
   async markAllAlertsRead(businessId: string) {
     await prisma.alert.updateMany({
       where: { businessId, isRead: false },

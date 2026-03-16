@@ -71,6 +71,11 @@ CREATE TABLE IF NOT EXISTS "SourceConnection" (
   "businessId" TEXT NOT NULL REFERENCES "Business"("id") ON DELETE CASCADE ON UPDATE CASCADE,
   "source" "ReviewSource" NOT NULL,
   "connected" BOOLEAN NOT NULL DEFAULT FALSE,
+  "accessToken" TEXT,
+  "refreshToken" TEXT,
+  "accessTokenExpiresAt" TIMESTAMP(3),
+  "tokenType" TEXT,
+  "scope" TEXT,
   "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   UNIQUE ("businessId", "source")
