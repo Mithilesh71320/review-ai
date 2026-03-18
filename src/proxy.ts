@@ -5,6 +5,11 @@ const isProtectedRoute = createRouteMatcher([
   "/reviews(.*)",
   "/alerts(.*)",
   "/settings(.*)",
+  "/api/settings(.*)",
+  "/api/dashboard(.*)",
+  "/api/reviews(.*)",
+  "/api/alerts(.*)",
+  "/api/insights(.*)",
   "/api/fetch-reviews(.*)",
   "/api/google(.*)",
 ]);

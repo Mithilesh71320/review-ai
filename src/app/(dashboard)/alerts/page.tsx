@@ -18,12 +18,20 @@ import {
   AlertTriangle,
   Bell,
   CheckCircle,
+  RefreshCw,
   XCircle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { fetchJson } from "@/lib/api";
 import { queryKeys } from "@/lib/query-keys";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 type AlertsResponse = {
   unreadCount: number;
@@ -42,6 +50,15 @@ type AlertsResponse = {
     name: string;
     description: string;
     enabled: boolean;
+  }>;
+  selectedBusinessId: string | null;
+};
+
+type SettingsResponse = {
+  businesses: Array<{
+    id: string;
+    name: string;
+    placeId: string;
   }>;
 };
 
@@ -64,25 +81,56 @@ function AlertIcon({ type }: { type: string }) {
 
 export default function AlertsPage() {
   const [savingRule, setSavingRule] = useState<string | null>(null);
+  const [selectedBusinessId, setSelectedBusinessId] = useState<string | null>(null);
   const queryClient = useQueryClient();
+  const settingsQuery = useQuery({
+    queryKey: queryKeys.settings,
+    queryFn: () => fetchJson<SettingsResponse>("/api/settings", { cache: "no-store" }),
+  });
+  const effectiveBusinessId =
+    selectedBusinessId ?? settingsQuery.data?.businesses[0]?.id ?? null;
+  const selectedBusiness =
+    settingsQuery.data?.businesses.find((business) => business.id === effectiveBusinessId) ??
+    settingsQuery.data?.businesses[0];
   const { data, isPending, error } = useQuery({
-    queryKey: queryKeys.alerts,
-    queryFn: () => fetchJson<AlertsResponse>("/api/alerts", { cache: "no-store" }),
+    queryKey: queryKeys.alerts(effectiveBusinessId),
+    queryFn: () =>
+      fetchJson<AlertsResponse>(
+        `/api/alerts${effectiveBusinessId ? `?managedBusinessId=${effectiveBusinessId}` : ""}`,
+        { cache: "no-store" },
+      ),
   });
 
   const refreshAlerts = async () => {
     await Promise.all([
-      queryClient.invalidateQueries({ queryKey: queryKeys.alerts }),
-      queryClient.invalidateQueries({ queryKey: queryKeys.dashboard }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.alerts(effectiveBusinessId) }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.dashboard(effectiveBusinessId) }),
     ]);
   };
+
+  const syncReviewsMutation = useMutation({
+    mutationFn: async () => {
+      if (selectedBusiness?.placeId?.trim() || selectedBusiness?.name?.trim()) {
+        await fetchJson<{ storedCount: number }>("/api/fetch-reviews", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            managedBusinessId: effectiveBusinessId,
+            placeId: selectedBusiness?.placeId?.trim(),
+            businessName: selectedBusiness?.name?.trim(),
+          }),
+        });
+      }
+    },
+    onSuccess: refreshAlerts,
+  });
 
   const markAllReadMutation = useMutation({
     mutationFn: () =>
       fetchJson<{ ok: true }>("/api/alerts", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "markAllRead" }),
+        body: JSON.stringify({ action: "markAllRead", managedBusinessId: effectiveBusinessId }),
       }),
     onSuccess: refreshAlerts,
   });
@@ -106,23 +154,59 @@ export default function AlertsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
         <div>
           <h1 className="text-3xl font-bold tracking-tight text-foreground">
             Alerts
           </h1>
           <p className="text-muted-foreground">Monitor and manage review alerts.</p>
         </div>
-        <Button
-          variant="outline"
-          className="gap-2"
-          disabled={markAllReadMutation.isPending}
-          onClick={() => void markAllReadMutation.mutateAsync()}
-        >
-          <CheckCircle className="h-4 w-4" />
-          Mark all read
-        </Button>
+        <div className="flex flex-col gap-3 sm:flex-row">
+          <Select
+            value={effectiveBusinessId ?? "none"}
+            onValueChange={(value) => setSelectedBusinessId(value === "none" ? null : value)}
+          >
+            <SelectTrigger className="w-[240px]">
+              <SelectValue placeholder="Select business" />
+            </SelectTrigger>
+            <SelectContent>
+              {settingsQuery.data?.businesses.length ? (
+                settingsQuery.data.businesses.map((business) => (
+                  <SelectItem key={business.id} value={business.id}>
+                    {business.name}
+                  </SelectItem>
+                ))
+              ) : (
+                <SelectItem value="none">No businesses added</SelectItem>
+              )}
+            </SelectContent>
+          </Select>
+          <Button
+            variant="outline"
+            className="gap-2"
+            onClick={() => void syncReviewsMutation.mutateAsync()}
+            disabled={syncReviewsMutation.isPending || !selectedBusiness}
+          >
+            <RefreshCw className="h-4 w-4" />
+            {syncReviewsMutation.isPending ? "Refreshing..." : "Refresh"}
+          </Button>
+          <Button
+            variant="outline"
+            className="gap-2"
+            disabled={markAllReadMutation.isPending}
+            onClick={() => void markAllReadMutation.mutateAsync()}
+          >
+            <CheckCircle className="h-4 w-4" />
+            Mark all read
+          </Button>
+        </div>
       </div>
+
+      {!settingsQuery.data?.businesses.length && (
+        <div className="rounded-lg border border-warning/40 bg-warning/10 px-4 py-3 text-sm text-foreground">
+          Add at least one business in Settings to view business-specific alerts.
+        </div>
+      )}
 
       {isPending && <div className="text-sm text-muted-foreground">Loading alerts...</div>}
       {error && (

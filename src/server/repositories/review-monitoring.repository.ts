@@ -82,22 +82,96 @@ export class ReviewMonitoringRepository {
         settings: true,
         sources: true,
         rules: true,
+        managedBusinesses: {
+          orderBy: { createdAt: "asc" },
+        },
       },
     });
   }
 
-  async listReviews(businessId: string) {
+  async listReviews(businessId: string, managedBusinessId?: string) {
     return prisma.review.findMany({
-      where: { businessId },
+      where: {
+        businessId,
+        ...(managedBusinessId ? { managedBusinessId } : {}),
+      },
       orderBy: { createdAt: "desc" },
     });
   }
 
-  async listAlerts(businessId: string) {
+  async listAlerts(businessId: string, managedBusinessId?: string) {
     return prisma.alert.findMany({
-      where: { businessId },
+      where: {
+        businessId,
+        ...(managedBusinessId ? { managedBusinessId } : {}),
+      },
       orderBy: { createdAt: "desc" },
     });
+  }
+
+  async listManagedBusinesses(businessId: string) {
+    return prisma.managedBusiness.findMany({
+      where: { businessId },
+      orderBy: [{ createdAt: "asc" }],
+    });
+  }
+
+  async getManagedBusiness(businessId: string, managedBusinessId: string) {
+    return prisma.managedBusiness.findFirst({
+      where: {
+        id: managedBusinessId,
+        businessId,
+      },
+    });
+  }
+
+  async upsertManagedBusinesses(
+    businessId: string,
+    businesses: Array<{
+      id?: string;
+      name: string;
+      placeId: string;
+      accountName?: string | null;
+      locationName?: string | null;
+      mapsUri?: string | null;
+    }>,
+  ) {
+    const normalized = businesses
+      .map((item) => ({
+        id: item.id,
+        name: item.name.trim(),
+        placeId: item.placeId.trim(),
+        accountName: item.accountName?.trim() || null,
+        locationName: item.locationName?.trim() || null,
+        mapsUri: item.mapsUri?.trim() || null,
+      }))
+      .filter((item) => item.name && item.placeId);
+
+    const records = [];
+    for (const item of normalized) {
+      const record = await prisma.managedBusiness.upsert({
+        where: item.id ? { id: item.id } : { placeId: item.placeId },
+        update: {
+          name: item.name,
+          placeId: item.placeId,
+          accountName: item.accountName,
+          locationName: item.locationName,
+          mapsUri: item.mapsUri,
+          businessId,
+        },
+        create: {
+          businessId,
+          name: item.name,
+          placeId: item.placeId,
+          accountName: item.accountName,
+          locationName: item.locationName,
+          mapsUri: item.mapsUri,
+        },
+      });
+      records.push(record);
+    }
+
+    return records;
   }
 
   async listAlertRules(businessId: string) {
@@ -162,6 +236,20 @@ export class ReviewMonitoringRepository {
     });
   }
 
+  async markAllAlertsReadForManagedBusiness(
+    businessId: string,
+    managedBusinessId: string,
+  ) {
+    await prisma.alert.updateMany({
+      where: {
+        businessId,
+        managedBusinessId,
+        isRead: false,
+      },
+      data: { isRead: true },
+    });
+  }
+
   async updateAlertRule(businessId: string, type: AlertType, enabled: boolean) {
     return prisma.alertRule.update({
       where: {
@@ -190,6 +278,7 @@ export class ReviewMonitoringRepository {
         smsNotifications: boolean;
         weeklyDigest: boolean;
         autoRespond: boolean;
+        aiProvider: string;
         sentimentModel: string;
         analysisLanguage: string;
       };
@@ -224,6 +313,7 @@ export class ReviewMonitoringRepository {
   async createAlert(
     businessId: string,
     input: {
+      managedBusinessId?: string | null;
       type: AlertType;
       title: string;
       description: string;
@@ -234,6 +324,7 @@ export class ReviewMonitoringRepository {
     return prisma.alert.create({
       data: {
         businessId,
+        managedBusinessId: input.managedBusinessId,
         type: input.type,
         title: input.title,
         description: input.description,
@@ -246,6 +337,28 @@ export class ReviewMonitoringRepository {
   async createReview(input: Prisma.ReviewCreateInput) {
     return prisma.review.create({
       data: input,
+    });
+  }
+
+  async updateReviewReply(
+    reviewId: string,
+    data: { reviewReply: string; reviewRepliedAt: Date },
+  ) {
+    return prisma.review.update({
+      where: { id: reviewId },
+      data,
+    });
+  }
+
+  async getReviewById(reviewId: string, businessId: string) {
+    return prisma.review.findFirst({
+      where: {
+        id: reviewId,
+        businessId,
+      },
+      include: {
+        managedBusiness: true,
+      },
     });
   }
 }

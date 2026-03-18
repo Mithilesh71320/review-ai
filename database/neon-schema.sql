@@ -43,21 +43,38 @@ CREATE TABLE IF NOT EXISTS "Business" (
   "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS "ManagedBusiness" (
+  "id" TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+  "businessId" TEXT NOT NULL REFERENCES "Business"("id") ON DELETE CASCADE ON UPDATE CASCADE,
+  "name" TEXT NOT NULL,
+  "placeId" TEXT NOT NULL UNIQUE,
+  "accountName" TEXT,
+  "locationName" TEXT,
+  "mapsUri" TEXT,
+  "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS "Review" (
   "id" TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
   "businessId" TEXT NOT NULL REFERENCES "Business"("id") ON DELETE CASCADE ON UPDATE CASCADE,
+  "managedBusinessId" TEXT REFERENCES "ManagedBusiness"("id") ON DELETE SET NULL ON UPDATE CASCADE,
   "author" TEXT NOT NULL,
   "text" TEXT NOT NULL,
   "rating" INTEGER NOT NULL,
   "sentiment" "Sentiment" NOT NULL,
   "source" "ReviewSource" NOT NULL,
   "externalRef" TEXT,
+  "reviewResourceName" TEXT,
+  "reviewReply" TEXT,
+  "reviewRepliedAt" TIMESTAMP(3),
   "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS "Alert" (
   "id" TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
   "businessId" TEXT NOT NULL REFERENCES "Business"("id") ON DELETE CASCADE ON UPDATE CASCADE,
+  "managedBusinessId" TEXT REFERENCES "ManagedBusiness"("id") ON DELETE SET NULL ON UPDATE CASCADE,
   "type" "AlertType" NOT NULL,
   "title" TEXT NOT NULL,
   "description" TEXT NOT NULL,
@@ -101,6 +118,7 @@ CREATE TABLE IF NOT EXISTS "BusinessSettings" (
   "smsNotifications" BOOLEAN NOT NULL DEFAULT FALSE,
   "weeklyDigest" BOOLEAN NOT NULL DEFAULT TRUE,
   "autoRespond" BOOLEAN NOT NULL DEFAULT TRUE,
+  "aiProvider" TEXT NOT NULL DEFAULT 'gemini',
   "sentimentModel" TEXT NOT NULL DEFAULT 'balanced',
   "analysisLanguage" TEXT NOT NULL DEFAULT 'en',
   "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -115,6 +133,9 @@ CREATE INDEX IF NOT EXISTS "Review_businessId_createdAt_idx"
 
 CREATE INDEX IF NOT EXISTS "Alert_businessId_createdAt_idx"
   ON "Alert" ("businessId", "createdAt" DESC);
+
+CREATE INDEX IF NOT EXISTS "ManagedBusiness_businessId_createdAt_idx"
+  ON "ManagedBusiness" ("businessId", "createdAt" DESC);
 
 CREATE INDEX IF NOT EXISTS "SourceConnection_businessId_idx"
   ON "SourceConnection" ("businessId");

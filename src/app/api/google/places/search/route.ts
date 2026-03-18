@@ -18,7 +18,14 @@ export async function GET(req: Request) {
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "Failed to search Google Places.";
+    const status =
+      typeof error === "object" &&
+      error !== null &&
+      "statusCode" in error &&
+      typeof error.statusCode === "number"
+        ? error.statusCode
+        : 500;
 
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json({ error: message }, { status });
   }
 }

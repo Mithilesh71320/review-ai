@@ -35,32 +35,55 @@ enum AlertSeverity {
 }
 
 model Business {
-  id        String   @id @default(uuid())
-  userId    String   @unique
-  name      String
-  email     String?
-  phone     String?
-  website   String?
-  placeId   String?  @unique
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  reviews   Review[]
-  alerts    Alert[]
-  settings  BusinessSettings?
-  sources   SourceConnection[]
-  rules     AlertRule[]
+  id                String            @id @default(uuid())
+  userId            String            @unique
+  name              String
+  email             String?
+  phone             String?
+  website           String?
+  placeId           String?           @unique
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+  reviews           Review[]
+  alerts            Alert[]
+  settings          BusinessSettings?
+  sources           SourceConnection[]
+  rules             AlertRule[]
+  managedBusinesses ManagedBusiness[]
+}
+
+model ManagedBusiness {
+  id         String   @id @default(uuid())
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  name       String
+  placeId    String   @unique
+  accountName String?
+  locationName String?
+  mapsUri    String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  reviews    Review[]
+  alerts     Alert[]
+
+  @@index([businessId, createdAt(sort: Desc)])
 }
 
 model Review {
   id          String       @id @default(uuid())
   businessId  String
   business    Business     @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  managedBusinessId String?
+  managedBusiness ManagedBusiness? @relation(fields: [managedBusinessId], references: [id], onDelete: SetNull)
   author      String
   text        String
   rating      Int
   sentiment   Sentiment
   source      ReviewSource
   externalRef String?
+  reviewResourceName String?
+  reviewReply String?
+  reviewRepliedAt DateTime?
   createdAt   DateTime     @default(now())
 
   @@index([businessId, createdAt(sort: Desc)])
@@ -71,6 +94,8 @@ model Alert {
   id          String        @id @default(uuid())
   businessId  String
   business    Business      @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  managedBusinessId String?
+  managedBusiness ManagedBusiness? @relation(fields: [managedBusinessId], references: [id], onDelete: SetNull)
   type        AlertType
   title       String
   description String
@@ -123,6 +148,7 @@ model BusinessSettings {
   smsNotifications   Boolean  @default(false)
   weeklyDigest       Boolean  @default(true)
   autoRespond        Boolean  @default(true)
+  aiProvider         String   @default("gemini")
   sentimentModel     String   @default("balanced")
   analysisLanguage   String   @default("en")
   createdAt          DateTime @default(now())

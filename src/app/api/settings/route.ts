@@ -36,11 +36,20 @@ export async function PUT(req: Request) {
       weeklyDigest: boolean;
     };
     ai: {
+      provider: string;
       sentimentModel: string;
       analysisLanguage: string;
       autoRespond: boolean;
     };
     sources: Array<{ key: ReviewSource; connected: boolean }>;
+    businesses: Array<{
+      id?: string;
+      name: string;
+      placeId: string;
+      accountName?: string | null;
+      locationName?: string | null;
+      mapsUri?: string | null;
+    }>;
   };
 
   await reviewMonitoringService.updateSettings(userId, payload);

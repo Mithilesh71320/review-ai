@@ -1,7 +1,7 @@
 "use client";
 
-import { useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMemo, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Card,
   CardContent,
@@ -16,6 +16,7 @@ import {
   TrendingUp,
   MessageSquare,
   AlertTriangle,
+  RefreshCw,
 } from "lucide-react";
 import {
   BarChart,
@@ -30,6 +31,14 @@ import {
 } from "recharts";
 import { fetchJson } from "@/lib/api";
 import { queryKeys } from "@/lib/query-keys";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Button } from "@/components/ui/button";
 
 type DashboardResponse = {
   stats: {
@@ -50,6 +59,15 @@ type DashboardResponse = {
     rating: number;
     sentiment: string;
     time: string;
+  }>;
+  selectedBusinessId: string | null;
+};
+
+type SettingsResponse = {
+  businesses: Array<{
+    id: string;
+    name: string;
+    placeId: string;
   }>;
 };
 
@@ -77,9 +95,49 @@ function SentimentBadge({ sentiment }: { sentiment: string }) {
 }
 
 export default function DashboardPage() {
+  const [selectedBusinessId, setSelectedBusinessId] = useState<string | null>(null);
+  const queryClient = useQueryClient();
+  const settingsQuery = useQuery({
+    queryKey: queryKeys.settings,
+    queryFn: () => fetchJson<SettingsResponse>("/api/settings", { cache: "no-store" }),
+  });
+
+  const effectiveBusinessId =
+    selectedBusinessId ?? settingsQuery.data?.businesses[0]?.id ?? null;
+  const selectedBusiness =
+    settingsQuery.data?.businesses.find((business) => business.id === effectiveBusinessId) ??
+    settingsQuery.data?.businesses[0];
+
   const { data, isPending, error } = useQuery({
-    queryKey: queryKeys.dashboard,
-    queryFn: () => fetchJson<DashboardResponse>("/api/dashboard", { cache: "no-store" }),
+    queryKey: queryKeys.dashboard(effectiveBusinessId),
+    queryFn: () =>
+      fetchJson<DashboardResponse>(
+        `/api/dashboard${effectiveBusinessId ? `?managedBusinessId=${effectiveBusinessId}` : ""}`,
+        { cache: "no-store" },
+      ),
+  });
+
+  const refreshMutation = useMutation({
+    mutationFn: async () => {
+      if (selectedBusiness?.placeId?.trim() || selectedBusiness?.name?.trim()) {
+        await fetchJson<{ storedCount: number }>("/api/fetch-reviews", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            managedBusinessId: effectiveBusinessId,
+            placeId: selectedBusiness?.placeId?.trim(),
+            businessName: selectedBusiness?.name?.trim(),
+          }),
+        });
+      }
+    },
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.dashboard(effectiveBusinessId) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.reviews(effectiveBusinessId) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.alerts(effectiveBusinessId) }),
+      ]);
+    },
   });
 
   const stats = data?.stats;
@@ -110,14 +168,52 @@ export default function DashboardPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold tracking-tight text-foreground">
-          Dashboard
-        </h1>
-        <p className="text-muted-foreground">
-          Overview of your review monitoring activity.
-        </p>
+      <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight text-foreground">
+            Dashboard
+          </h1>
+          <p className="text-muted-foreground">
+            Overview of your review monitoring activity.
+          </p>
+        </div>
+        <div className="flex flex-col gap-3 sm:flex-row">
+          <Select
+            value={effectiveBusinessId ?? "none"}
+            onValueChange={(value) => setSelectedBusinessId(value === "none" ? null : value)}
+          >
+            <SelectTrigger className="w-[240px]">
+              <SelectValue placeholder="Select business" />
+            </SelectTrigger>
+            <SelectContent>
+              {settingsQuery.data?.businesses.length ? (
+                settingsQuery.data.businesses.map((business) => (
+                  <SelectItem key={business.id} value={business.id}>
+                    {business.name}
+                  </SelectItem>
+                ))
+              ) : (
+                <SelectItem value="none">No businesses added</SelectItem>
+              )}
+            </SelectContent>
+          </Select>
+          <Button
+            variant="outline"
+            className="gap-2"
+            onClick={() => void refreshMutation.mutateAsync()}
+            disabled={refreshMutation.isPending || !selectedBusiness}
+          >
+            <RefreshCw className="h-4 w-4" />
+            {refreshMutation.isPending ? "Refreshing..." : "Refresh"}
+          </Button>
+        </div>
       </div>
+
+      {!settingsQuery.data?.businesses.length && (
+        <div className="rounded-lg border border-warning/40 bg-warning/10 px-4 py-3 text-sm text-foreground">
+          Add at least one business in Settings to view business-specific dashboard data.
+        </div>
+      )}
 
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <Card>

@@ -32,8 +32,8 @@ export function AppSidebar() {
     <Sidebar collapsible="icon">
       <SidebarContent>
         <SidebarGroup>
-          <SidebarGroupLabel className="text-base font-bold tracking-tight">
-            {!collapsed && "Review AI"}
+          <SidebarGroupLabel className="text-base font-bold tracking-tight text-sidebar-foreground">
+            {!collapsed && "Control Room"}
           </SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
@@ -45,8 +45,9 @@ export function AppSidebar() {
                       <Link
                         href={item.url}
                         className={cn(
-                          "flex items-center gap-2 hover:bg-accent/50",
-                          isActive && "bg-accent text-primary font-medium",
+                          "flex items-center gap-2 rounded-xl text-sidebar-foreground/85 transition hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
+                          isActive &&
+                            "bg-sidebar-primary text-sidebar-primary-foreground font-medium shadow-sm",
                         )}
                       >
                         <item.icon className="mr-2 h-4 w-4" />

@@ -27,6 +27,7 @@ import {
 } from "@/components/ui/select";
 import { fetchJson } from "@/lib/api";
 import { queryKeys } from "@/lib/query-keys";
+import { X } from "lucide-react";
 
 type SettingsResponse = {
   business: {
@@ -43,6 +44,7 @@ type SettingsResponse = {
     weeklyDigest: boolean;
   };
   ai: {
+    provider: string;
     sentimentModel: string;
     analysisLanguage: string;
     autoRespond: boolean;
@@ -51,6 +53,14 @@ type SettingsResponse = {
     source: string;
     key: "GOOGLE" | "YELP" | "FACEBOOK" | "TRIPADVISOR";
     connected: boolean;
+  }>;
+  businesses: Array<{
+    id?: string;
+    name: string;
+    placeId: string;
+    accountName?: string | null;
+    locationName?: string | null;
+    mapsUri?: string | null;
   }>;
 };
 
@@ -95,11 +105,13 @@ const initialState: SettingsResponse = {
     weeklyDigest: true,
   },
   ai: {
+    provider: "gemini",
     sentimentModel: "balanced",
     analysisLanguage: "en",
     autoRespond: true,
   },
   sources: [],
+  businesses: [],
 };
 
 export default function SettingsPage() {
@@ -107,6 +119,8 @@ export default function SettingsPage() {
   const [draft, setDraft] = useState<SettingsResponse | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [placeSearchQuery, setPlaceSearchQuery] = useState("");
+  const [selectionDirty, setSelectionDirty] = useState(false);
+  const [newBusiness, setNewBusiness] = useState({ name: "", placeId: "" });
 
   const settingsQuery = useQuery({
     queryKey: queryKeys.settings,
@@ -144,6 +158,7 @@ export default function SettingsPage() {
       }),
     onSuccess: async () => {
       setDraft(null);
+      setSelectionDirty(false);
       setMessage("Settings saved.");
       await queryClient.invalidateQueries({ queryKey: queryKeys.settings });
     },
@@ -165,19 +180,35 @@ export default function SettingsPage() {
     },
   });
 
-  const applyBusinessSelection = (business: { name: string; placeId: string }) => {
+  const applyBusinessSelection = (business: {
+    name: string;
+    placeId: string;
+    accountName?: string | null;
+    locationName?: string | null;
+    mapsUri?: string | null;
+  }) => {
     updateState((current) => ({
       ...current,
-      business: {
-        ...current.business,
-        name: business.name,
-        placeId: business.placeId,
-      },
+      businesses: current.businesses.some((item) => item.placeId === business.placeId)
+        ? current.businesses.map((item) =>
+            item.placeId === business.placeId ? { ...item, ...business } : item,
+          )
+        : [...current.businesses, business],
       sources: current.sources.map((source) =>
         source.key === "GOOGLE" ? { ...source, connected: true } : source,
       ),
     }));
-    setMessage(`Selected ${business.name} as the Google business.`);
+    setSelectionDirty(true);
+    setMessage(`${business.name} added to monitored businesses.`);
+  };
+
+  const removeBusiness = (placeId: string) => {
+    updateState((current) => ({
+      ...current,
+      businesses: current.businesses.filter((business) => business.placeId !== placeId),
+    }));
+    setSelectionDirty(true);
+    setMessage("Business removed from monitored businesses.");
   };
 
   const isLoading = settingsQuery.isPending;
@@ -191,6 +222,16 @@ export default function SettingsPage() {
     placeSearchResultsQuery.error instanceof Error
       ? placeSearchResultsQuery.error.message
       : null;
+  const placeSuggestions = placeSearchResultsQuery.data?.places ?? [];
+
+  const selectPlaceSuggestion = (place: GooglePlaceSearchResponse["places"][number]) => {
+    setNewBusiness({
+      name: place.name,
+      placeId: place.placeId,
+    });
+    setPlaceSearchQuery("");
+    setMessage("Place selected. Click + Add Business to save it.");
+  };
 
   return (
     <div className="space-y-6">
@@ -217,13 +258,15 @@ export default function SettingsPage() {
         <>
           <Card>
             <CardHeader>
-              <CardTitle>Business Profile</CardTitle>
-              <CardDescription>Update your business information.</CardDescription>
+              <CardTitle>User Profile</CardTitle>
+              <CardDescription>
+                Update the account details for the signed-in user.
+              </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="grid gap-4 md:grid-cols-2">
                 <div className="space-y-2">
-                  <Label htmlFor="business-name">Business Name</Label>
+                  <Label htmlFor="business-name">Username</Label>
                   <Input
                     id="business-name"
                     value={state.business.name}
@@ -262,33 +305,147 @@ export default function SettingsPage() {
                     }
                   />
                 </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Business Profiles</CardTitle>
+              <CardDescription>
+                Add and manage multiple businesses for this account using Google search
+                or manual place IDs.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="rounded-lg border border-border/60 bg-muted/20 p-4">
+                <p className="text-sm font-medium text-foreground">How this works</p>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Search Google Places, click a result to add it, or enter the business
+                  name and place ID manually. You can keep adding multiple businesses for
+                  the same user.
+                </p>
+              </div>
+
+              <div className="grid gap-4 md:grid-cols-3 md:items-start">
                 <div className="space-y-2">
-                  <Label htmlFor="website">Website</Label>
+                  <Label htmlFor="new-business-name">Business Name</Label>
                   <Input
-                    id="website"
-                    value={state.business.website}
-                    onChange={(e) =>
-                      updateState((current) => ({
-                        ...current,
-                        business: { ...current.business, website: e.target.value },
-                      }))
+                    id="new-business-name"
+                    value={newBusiness.name}
+                    onChange={(event) =>
+                      setNewBusiness((current) => ({ ...current, name: event.target.value }))
                     }
                   />
+                  <Button
+                    className="w-full md:w-auto"
+                    onClick={() => {
+                      if (!newBusiness.name.trim() || !newBusiness.placeId.trim()) {
+                        setMessage("Business name and place ID are required to add a business.");
+                        return;
+                      }
+
+                      applyBusinessSelection({
+                        name: newBusiness.name.trim(),
+                        placeId: newBusiness.placeId.trim(),
+                      });
+                      setNewBusiness({ name: "", placeId: "" });
+                    }}
+                  >
+                    + Add Business
+                  </Button>
                 </div>
-                <div className="space-y-2 md:col-span-2">
-                  <Label htmlFor="placeId">Google Place ID</Label>
+                <div className="space-y-2">
+                  <Label htmlFor="place-search">Search Google Places</Label>
+                  <div className="relative">
+                    <Input
+                      id="place-search"
+                      placeholder="Search by business name or address"
+                      value={placeSearchQuery}
+                      onChange={(event) => setPlaceSearchQuery(event.target.value)}
+                      autoComplete="off"
+                    />
+                    {placeSearchQuery.trim().length >= 3 && (
+                      <div className="absolute z-20 mt-2 max-h-72 w-full overflow-y-auto rounded-xl border border-border bg-popover shadow-lg">
+                        {placeSearchResultsQuery.isFetching && (
+                          <div className="px-4 py-3 text-sm text-muted-foreground">
+                            Searching places...
+                          </div>
+                        )}
+                        {!placeSearchResultsQuery.isFetching && placeSearchError && (
+                          <div className="px-4 py-3 text-sm text-destructive">
+                            {placeSearchError}
+                          </div>
+                        )}
+                        {!placeSearchResultsQuery.isFetching &&
+                          !placeSearchError &&
+                          placeSuggestions.map((place) => (
+                            <button
+                              key={place.placeId}
+                              type="button"
+                              className="block w-full border-b border-border px-4 py-3 text-left last:border-b-0 hover:bg-accent/40"
+                              onClick={() => selectPlaceSuggestion(place)}
+                            >
+                              <p className="font-medium text-foreground">{place.name}</p>
+                              <p className="text-sm text-muted-foreground">
+                                {place.address ?? "No address available"}
+                              </p>
+                              <p className="text-xs text-muted-foreground">
+                                Place ID: {place.placeId}
+                              </p>
+                            </button>
+                          ))}
+                        {!placeSearchResultsQuery.isFetching &&
+                          !placeSearchError &&
+                          placeSuggestions.length === 0 && (
+                            <div className="px-4 py-3 text-sm text-muted-foreground">
+                              No places found.
+                            </div>
+                          )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="new-business-place-id">Google Place ID</Label>
                   <Input
-                    id="placeId"
-                    value={state.business.placeId}
-                    onChange={(e) =>
-                      updateState((current) => ({
-                        ...current,
-                        business: { ...current.business, placeId: e.target.value },
-                      }))
+                    id="new-business-place-id"
+                    value={newBusiness.placeId}
+                    onChange={(event) =>
+                      setNewBusiness((current) => ({ ...current, placeId: event.target.value }))
                     }
                   />
                 </div>
               </div>
+
+              {state.businesses.length > 0 ? (
+                <div className="space-y-2">
+                  {state.businesses.map((business) => (
+                    <div
+                      key={business.id ?? business.placeId}
+                      className="flex items-start justify-between gap-3 rounded-lg border border-border bg-background px-4 py-3"
+                    >
+                      <div>
+                        <p className="font-medium text-foreground">{business.name}</p>
+                        <p className="text-xs text-muted-foreground">{business.placeId}</p>
+                      </div>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        aria-label={`Remove ${business.name}`}
+                        onClick={() => removeBusiness(business.placeId)}
+                      >
+                        <X className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-sm text-muted-foreground">
+                  No monitored businesses added yet.
+                </p>
+              )}
 
               <Separator />
 
@@ -314,6 +471,15 @@ export default function SettingsPage() {
                     ? "Refreshing..."
                     : "Refresh Google Businesses"}
                 </Button>
+                <Button
+                  disabled={!selectionDirty || saveMutation.isPending}
+                  onClick={() => {
+                    setMessage(null);
+                    void saveMutation.mutateAsync();
+                  }}
+                >
+                  {saveMutation.isPending ? "Saving..." : "Save Business List"}
+                </Button>
               </div>
 
               {businessesError && (
@@ -337,7 +503,7 @@ export default function SettingsPage() {
                         Businesses from your Google account
                       </p>
                       <p className="text-sm text-muted-foreground">
-                        Select one to populate the business name and Google Place ID.
+                        Click any business to add it to this user&apos;s monitored list.
                       </p>
                     </div>
                     <div className="space-y-2">
@@ -357,6 +523,9 @@ export default function SettingsPage() {
                             applyBusinessSelection({
                               name: business.title,
                               placeId: business.placeId,
+                              accountName: business.accountName,
+                              locationName: business.locationName,
+                              mapsUri: business.mapsUri,
                             });
                           }}
                         >
@@ -370,65 +539,13 @@ export default function SettingsPage() {
                                 {business.placeId ?? "No place ID available"}
                               </p>
                             </div>
-                            <span className="text-sm text-primary">Use this</span>
+                            <span className="text-sm text-primary">Add business</span>
                           </div>
                         </button>
                       ))}
                     </div>
                   </div>
                 )}
-
-              <Separator />
-
-              <div className="space-y-3">
-                <div>
-                  <p className="text-sm font-medium text-foreground">Search Google Places</p>
-                  <p className="text-sm text-muted-foreground">
-                    Fallback when Business Profile locations are unavailable.
-                  </p>
-                </div>
-                <Input
-                  placeholder="Search by business name or address"
-                  value={placeSearchQuery}
-                  onChange={(event) => setPlaceSearchQuery(event.target.value)}
-                />
-                {placeSearchError && (
-                  <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
-                    {placeSearchError}
-                  </div>
-                )}
-                {placeSearchResultsQuery.isFetching && (
-                  <div className="text-sm text-muted-foreground">Searching places...</div>
-                )}
-                {placeSearchResultsQuery.data && placeSearchQuery.trim().length >= 3 && (
-                  <div className="space-y-2">
-                    {placeSearchResultsQuery.data.places.map((place) => (
-                      <button
-                        key={place.placeId}
-                        type="button"
-                        className="w-full rounded-lg border border-border bg-background px-4 py-3 text-left transition hover:border-primary/40 hover:bg-accent/30"
-                        onClick={() =>
-                          applyBusinessSelection({
-                            name: place.name,
-                            placeId: place.placeId,
-                          })
-                        }
-                      >
-                        <p className="font-medium text-foreground">{place.name}</p>
-                        <p className="text-sm text-muted-foreground">
-                          {place.address ?? "No address available"}
-                        </p>
-                        <p className="text-xs text-muted-foreground">
-                          Place ID: {place.placeId}
-                        </p>
-                      </button>
-                    ))}
-                    {placeSearchResultsQuery.data.places.length === 0 && (
-                      <p className="text-sm text-muted-foreground">No places found.</p>
-                    )}
-                  </div>
-                )}
-              </div>
             </CardContent>
           </Card>
 
@@ -531,6 +648,27 @@ export default function SettingsPage() {
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="space-y-2">
+                <Label>AI Provider</Label>
+                <Select
+                  value={state.ai.provider}
+                  onValueChange={(value) =>
+                    updateState((current) => ({
+                      ...current,
+                      ai: { ...current.ai, provider: value },
+                    }))
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="gemini">Gemini</SelectItem>
+                    <SelectItem value="openai">OpenAI</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-2">
                 <Label>Sentiment Analysis Model</Label>
                 <Select
                   value={state.ai.sentimentModel}
@@ -579,9 +717,9 @@ export default function SettingsPage() {
 
               <div className="flex items-center justify-between">
                 <div className="space-y-0.5">
-                  <p className="text-sm font-medium text-foreground">Auto-respond to reviews</p>
+                  <p className="text-sm font-medium text-foreground">Auto-draft review replies</p>
                   <p className="text-sm text-muted-foreground">
-                    AI will draft response suggestions automatically
+                    AI will prepare reply suggestions that you can review and post.
                   </p>
                 </div>
                 <Switch

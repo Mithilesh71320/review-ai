@@ -5,6 +5,7 @@ import {
   Sentiment,
   type AlertSeverity,
 } from "@/generated/prisma/client";
+import { generateReviewInsights, generateReviewReply } from "@/lib/ai";
 import { reviewMonitoringRepository } from "@/server/repositories/review-monitoring.repository";
 
 type GoogleReview = {
@@ -12,6 +13,9 @@ type GoogleReview = {
   text?: string;
   rating?: number;
   time?: number;
+  review_resource_name?: string;
+  review_reply?: string;
+  review_replied_at?: string;
 };
 
 type GoogleTokenRefreshResponse = {
@@ -49,6 +53,23 @@ type GoogleBusinessLocationsResponse = {
   }>;
 };
 
+type GoogleLocationReviewsResponse = {
+  reviews?: Array<{
+    name?: string;
+    reviewer?: {
+      displayName?: string;
+    };
+    starRating?: "ONE" | "TWO" | "THREE" | "FOUR" | "FIVE";
+    comment?: string;
+    createTime?: string;
+    reviewReply?: {
+      comment?: string;
+      updateTime?: string;
+    };
+  }>;
+  averageRating?: number;
+};
+
 type GooglePlaceSearchResponse = {
   places?: Array<{
     id?: string;
@@ -57,13 +78,38 @@ type GooglePlaceSearchResponse = {
     rating?: number;
     userRatingCount?: number;
   }>;
+  error?: {
+    code?: number;
+    message?: string;
+    status?: string;
+  };
 };
 
+class GoogleApiError extends Error {
+  statusCode: number;
+
+  constructor(message: string, statusCode = 500) {
+    super(message);
+    this.name = "GoogleApiError";
+    this.statusCode = statusCode;
+  }
+}
+
 export class ReviewMonitoringService {
-  async getDashboard(userId: string) {
+  async getDashboard(userId: string, managedBusinessId?: string) {
     const workspace = await reviewMonitoringRepository.ensureWorkspace(userId);
-    const reviews = await reviewMonitoringRepository.listReviews(workspace.id);
-    const alerts = await reviewMonitoringRepository.listAlerts(workspace.id);
+    const selectedManagedBusiness = await this.resolveSelectedManagedBusiness(
+      workspace.id,
+      managedBusinessId,
+    );
+    const reviews = await reviewMonitoringRepository.listReviews(
+      workspace.id,
+      selectedManagedBusiness?.id,
+    );
+    const alerts = await reviewMonitoringRepository.listAlerts(
+      workspace.id,
+      selectedManagedBusiness?.id,
+    );
 
     const totalReviews = reviews.length;
     const averageRating =
@@ -144,12 +190,20 @@ export class ReviewMonitoringService {
         sentiment: review.sentiment.toLowerCase(),
         time: review.createdAt.toISOString(),
       })),
+      selectedBusinessId: selectedManagedBusiness?.id ?? null,
     };
   }
 
-  async getReviews(userId: string) {
+  async getReviews(userId: string, managedBusinessId?: string) {
     const workspace = await reviewMonitoringRepository.ensureWorkspace(userId);
-    const reviews = await reviewMonitoringRepository.listReviews(workspace.id);
+    const selectedManagedBusiness = await this.resolveSelectedManagedBusiness(
+      workspace.id,
+      managedBusinessId,
+    );
+    const reviews = await reviewMonitoringRepository.listReviews(
+      workspace.id,
+      selectedManagedBusiness?.id,
+    );
 
     return {
       reviews: reviews.map((review) => ({
@@ -160,14 +214,22 @@ export class ReviewMonitoringService {
         sentiment: review.sentiment.toLowerCase(),
         source: this.prettyEnum(review.source),
         createdAt: review.createdAt.toISOString(),
+        canReply: Boolean(review.reviewResourceName),
+        reply: review.reviewReply,
+        repliedAt: review.reviewRepliedAt?.toISOString() ?? null,
       })),
+      selectedBusinessId: selectedManagedBusiness?.id ?? null,
     };
   }
 
-  async getAlerts(userId: string) {
+  async getAlerts(userId: string, managedBusinessId?: string) {
     const workspace = await reviewMonitoringRepository.ensureWorkspace(userId);
+    const selectedManagedBusiness = await this.resolveSelectedManagedBusiness(
+      workspace.id,
+      managedBusinessId,
+    );
     const [alerts, rules] = await Promise.all([
-      reviewMonitoringRepository.listAlerts(workspace.id),
+      reviewMonitoringRepository.listAlerts(workspace.id, selectedManagedBusiness?.id),
       reviewMonitoringRepository.listAlertRules(workspace.id),
     ]);
 
@@ -189,12 +251,26 @@ export class ReviewMonitoringService {
         description: rule.description,
         enabled: rule.enabled,
       })),
+      selectedBusinessId: selectedManagedBusiness?.id ?? null,
     };
   }
 
-  async markAllAlertsRead(userId: string) {
+  async markAllAlertsRead(userId: string, managedBusinessId?: string) {
     const workspace = await reviewMonitoringRepository.ensureWorkspace(userId);
-    await reviewMonitoringRepository.markAllAlertsRead(workspace.id);
+    const selectedManagedBusiness = await this.resolveSelectedManagedBusiness(
+      workspace.id,
+      managedBusinessId,
+    );
+
+    if (!selectedManagedBusiness) {
+      await reviewMonitoringRepository.markAllAlertsRead(workspace.id);
+      return;
+    }
+
+    await reviewMonitoringRepository.markAllAlertsReadForManagedBusiness(
+      workspace.id,
+      selectedManagedBusiness.id,
+    );
   }
 
   async updateAlertRule(userId: string, type: AlertType, enabled: boolean) {
@@ -220,6 +296,7 @@ export class ReviewMonitoringService {
         weeklyDigest: workspace.settings?.weeklyDigest ?? true,
       },
       ai: {
+        provider: workspace.settings?.aiProvider ?? "gemini",
         sentimentModel: workspace.settings?.sentimentModel ?? "balanced",
         analysisLanguage: workspace.settings?.analysisLanguage ?? "en",
         autoRespond: workspace.settings?.autoRespond ?? true,
@@ -228,6 +305,14 @@ export class ReviewMonitoringService {
         source: this.prettyEnum(source.source),
         key: source.source,
         connected: source.connected,
+      })),
+      businesses: workspace.managedBusinesses.map((business) => ({
+        id: business.id,
+        name: business.name,
+        placeId: business.placeId,
+        accountName: business.accountName,
+        locationName: business.locationName,
+        mapsUri: business.mapsUri,
       })),
     };
   }
@@ -249,11 +334,20 @@ export class ReviewMonitoringService {
         weeklyDigest: boolean;
       };
       ai: {
+        provider: string;
         sentimentModel: string;
         analysisLanguage: string;
         autoRespond: boolean;
       };
       sources: Array<{ key: ReviewSource; connected: boolean }>;
+      businesses: Array<{
+        id?: string;
+        name: string;
+        placeId: string;
+        accountName?: string | null;
+        locationName?: string | null;
+        mapsUri?: string | null;
+      }>;
     },
   ) {
     const workspace = await reviewMonitoringRepository.ensureWorkspace(userId);
@@ -272,6 +366,7 @@ export class ReviewMonitoringService {
         smsNotifications: payload.notifications.smsNotifications,
         weeklyDigest: payload.notifications.weeklyDigest,
         autoRespond: payload.ai.autoRespond,
+        aiProvider: payload.ai.provider,
         sentimentModel: payload.ai.sentimentModel,
         analysisLanguage: payload.ai.analysisLanguage,
       },
@@ -280,6 +375,11 @@ export class ReviewMonitoringService {
         connected: source.connected,
       })),
     });
+
+    await reviewMonitoringRepository.upsertManagedBusinesses(
+      workspace.id,
+      payload.businesses,
+    );
   }
 
   async connectGoogleTokens(
@@ -477,11 +577,18 @@ export class ReviewMonitoringService {
       cache: "no-store",
     });
 
-    if (!response.ok) {
-      throw new Error("Failed to search Google Places.");
-    }
-
     const data = (await response.json()) as GooglePlaceSearchResponse;
+
+    if (!response.ok) {
+      const googleMessage = data.error?.message?.trim();
+      const fallbackMessage = "Failed to search Google Places.";
+      const message =
+        response.status === 403 && googleMessage
+          ? `Google Places access denied: ${googleMessage}`
+          : googleMessage || fallbackMessage;
+
+      throw new GoogleApiError(message, response.status);
+    }
 
     return {
       places: (data.places ?? [])
@@ -496,24 +603,201 @@ export class ReviewMonitoringService {
     };
   }
 
+  async resolvePlaceIdFromBusinessName(query: string) {
+    const result = await this.searchGooglePlaces(query);
+    const bestMatch = result.places[0];
+
+    if (!bestMatch) {
+      throw new Error("No Google Place match found for that business name.");
+    }
+
+    return bestMatch;
+  }
+
+  async getReviewInsights(userId: string, managedBusinessId?: string) {
+    const workspace = await reviewMonitoringRepository.ensureWorkspace(userId);
+    const selectedManagedBusiness = await this.resolveSelectedManagedBusiness(
+      workspace.id,
+      managedBusinessId,
+    );
+    const reviews = await reviewMonitoringRepository.listReviews(
+      workspace.id,
+      selectedManagedBusiness?.id,
+    );
+
+    if (reviews.length === 0) {
+      throw new Error("No reviews available for AI analysis.");
+    }
+
+    return generateReviewInsights({
+      businessName: selectedManagedBusiness?.name ?? workspace.name,
+      reviews: reviews.slice(0, 20).map((review) => ({
+        author: review.author,
+        rating: review.rating,
+        text: review.text,
+        createdAt: review.createdAt.toISOString(),
+      })),
+    });
+  }
+
+  async draftReviewReply(userId: string, reviewId: string) {
+    const workspace = await reviewMonitoringRepository.ensureWorkspace(userId);
+    const review = await reviewMonitoringRepository.getReviewById(reviewId, workspace.id);
+
+    if (!review) {
+      throw new Error("Review not found.");
+    }
+
+    return generateReviewReply({
+      businessName: review.managedBusiness?.name ?? workspace.name,
+      review: {
+        author: review.author,
+        rating: review.rating,
+        text: review.text,
+        createdAt: review.createdAt.toISOString(),
+      },
+    });
+  }
+
+  async postReviewReply(
+    userId: string,
+    reviewId: string,
+    replyText: string,
+  ) {
+    const workspace = await reviewMonitoringRepository.ensureWorkspace(userId);
+    const review = await reviewMonitoringRepository.getReviewById(reviewId, workspace.id);
+
+    if (!review) {
+      throw new Error("Review not found.");
+    }
+
+    if (!review.reviewResourceName) {
+      throw new Error(
+        "This review was not fetched from Google Business Profile, so posting a reply is not available.",
+      );
+    }
+
+    const accessToken = await this.getValidGoogleAccessToken(userId);
+    if (!accessToken) {
+      throw new Error("Google Business account is not connected.");
+    }
+
+    const response = await fetch(
+      `https://mybusiness.googleapis.com/v4/${review.reviewResourceName}/reply`,
+      {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ comment: replyText.trim() }),
+        cache: "no-store",
+      },
+    );
+
+    if (!response.ok) {
+      throw new Error("Failed to post Google review reply.");
+    }
+
+    const repliedAt = new Date();
+    await reviewMonitoringRepository.updateReviewReply(review.id, {
+      reviewReply: replyText.trim(),
+      reviewRepliedAt: repliedAt,
+    });
+
+    return {
+      ok: true,
+      repliedAt: repliedAt.toISOString(),
+    };
+  }
+
+  async fetchLatestReviewsForBusiness(
+    userId: string,
+    options: {
+      managedBusinessId?: string;
+      placeId?: string;
+      businessName?: string;
+    },
+  ) {
+    const workspace = await reviewMonitoringRepository.ensureWorkspace(userId);
+    const selectedManagedBusiness = options.managedBusinessId
+      ? await reviewMonitoringRepository.getManagedBusiness(
+          workspace.id,
+          options.managedBusinessId,
+        )
+      : null;
+
+    const fallbackBusinessName = options.businessName?.trim() || selectedManagedBusiness?.name;
+    let placeId = options.placeId?.trim() || selectedManagedBusiness?.placeId || "";
+    let placeName = fallbackBusinessName;
+    let placeRating: number | undefined;
+    let reviews: GoogleReview[] = [];
+
+    const accessToken = await this.getValidGoogleAccessToken(userId);
+
+    if (selectedManagedBusiness?.locationName && accessToken) {
+      const businessProfileResult = await this.fetchGoogleBusinessProfileReviews(
+        accessToken,
+        selectedManagedBusiness.locationName,
+      );
+
+      if (businessProfileResult.reviews.length > 0) {
+        reviews = businessProfileResult.reviews;
+        placeRating = businessProfileResult.rating;
+        placeName = selectedManagedBusiness.name;
+      }
+    }
+
+    if (!placeId) {
+      if (!fallbackBusinessName) {
+        throw new Error("Either placeId or businessName is required");
+      }
+
+      const resolvedPlace = await this.resolvePlaceIdFromBusinessName(fallbackBusinessName);
+      placeId = resolvedPlace.placeId;
+      placeName = resolvedPlace.name;
+    }
+
+    if (reviews.length === 0) {
+      const placesResult = await this.fetchGooglePlacesReviews(placeId, accessToken ?? undefined);
+      placeName = placesResult.name ?? placeName;
+      placeRating = placesResult.rating;
+      reviews = placesResult.reviews;
+    }
+
+    return this.ingestGoogleReviews(
+      userId,
+      options.managedBusinessId,
+      placeId,
+      placeName,
+      reviews,
+      placeRating,
+    );
+  }
+
   async ingestGoogleReviews(
     userId: string,
+    managedBusinessId: string | undefined,
     placeId: string,
     businessName: string | undefined,
     reviews: GoogleReview[],
     placeRating: number | undefined,
   ) {
     const workspace = await reviewMonitoringRepository.ensureWorkspace(userId);
+    const selectedManagedBusiness = managedBusinessId
+      ? await reviewMonitoringRepository.getManagedBusiness(workspace.id, managedBusinessId)
+      : null;
 
-    const safeName = businessName?.trim() || workspace.name;
+    const safeName =
+      businessName?.trim() || selectedManagedBusiness?.name || workspace.name;
 
     await this.updateSettings(userId, {
       business: {
-        name: safeName,
+        name: workspace.name,
         email: workspace.email ?? "",
         phone: workspace.phone ?? "",
         website: workspace.website ?? "",
-        placeId,
+        placeId: workspace.placeId ?? "",
       },
       notifications: {
         emailNotifications: workspace.settings?.emailNotifications ?? true,
@@ -522,6 +806,7 @@ export class ReviewMonitoringService {
         weeklyDigest: workspace.settings?.weeklyDigest ?? true,
       },
       ai: {
+        provider: workspace.settings?.aiProvider ?? "gemini",
         sentimentModel: workspace.settings?.sentimentModel ?? "balanced",
         analysisLanguage: workspace.settings?.analysisLanguage ?? "en",
         autoRespond: workspace.settings?.autoRespond ?? true,
@@ -530,7 +815,50 @@ export class ReviewMonitoringService {
         key: source.source,
         connected: source.connected || source.source === "GOOGLE",
       })),
+      businesses: [
+        ...workspace.managedBusinesses.map((business) => ({
+          id: business.id,
+          name: business.name,
+          placeId: business.placeId,
+          accountName: business.accountName,
+          locationName: business.locationName,
+          mapsUri: business.mapsUri,
+        })),
+        ...(!workspace.managedBusinesses.some((business) => business.placeId === placeId)
+          ? [
+              {
+                id: selectedManagedBusiness?.id,
+                name: safeName,
+                placeId,
+                accountName: selectedManagedBusiness?.accountName,
+                locationName: selectedManagedBusiness?.locationName,
+                mapsUri: selectedManagedBusiness?.mapsUri,
+              },
+            ]
+          : []),
+      ],
     });
+
+    const managedBusinessRecord = selectedManagedBusiness
+      ? await reviewMonitoringRepository.upsertManagedBusinesses(workspace.id, [
+          {
+            id: selectedManagedBusiness.id,
+            name: safeName,
+            placeId,
+            accountName: selectedManagedBusiness.accountName,
+            locationName: selectedManagedBusiness.locationName,
+            mapsUri: selectedManagedBusiness.mapsUri,
+          },
+        ]).then((records) => records[0] ?? null)
+      : await reviewMonitoringRepository.upsertManagedBusinesses(workspace.id, [
+          {
+            name: safeName,
+            placeId,
+            accountName: null,
+            locationName: null,
+            mapsUri: null,
+          },
+        ]).then((records) => records[0] ?? null);
 
     let storedCount = 0;
 
@@ -539,18 +867,27 @@ export class ReviewMonitoringService {
         continue;
       }
 
-      const externalRef = this.makeExternalRef(review);
+      if (!managedBusinessRecord) {
+        continue;
+      }
+      const externalRef = review.review_resource_name ?? this.makeExternalRef(placeId, review);
       const sentiment = this.sentimentFromRating(review.rating);
 
       try {
         await reviewMonitoringRepository.createReview({
           business: { connect: { id: workspace.id } },
+          managedBusiness: { connect: { id: managedBusinessRecord.id } },
           author: review.author_name?.trim() || "Anonymous",
           text: review.text,
           rating: review.rating,
           sentiment,
           source: "GOOGLE",
           externalRef,
+          reviewResourceName: review.review_resource_name ?? null,
+          reviewReply: review.review_reply ?? null,
+          reviewRepliedAt: review.review_replied_at
+            ? new Date(review.review_replied_at)
+            : null,
           createdAt: review.time
             ? new Date(review.time * 1000)
             : new Date(),
@@ -560,6 +897,7 @@ export class ReviewMonitoringService {
 
         if (review.rating <= 2) {
           await reviewMonitoringRepository.createAlert(workspace.id, {
+            managedBusinessId: managedBusinessRecord.id,
             type: "NEGATIVE_REVIEW",
             title: "New Negative Review Detected",
             description: `${review.author_name ?? "Anonymous"} left a ${review.rating}-star review on Google.`,
@@ -574,8 +912,8 @@ export class ReviewMonitoringService {
 
     return {
       business: {
-        id: workspace.id,
-        name: safeName,
+        id: managedBusinessRecord?.id ?? workspace.id,
+        name: managedBusinessRecord?.name ?? safeName,
         placeId,
         rating: placeRating ?? null,
       },
@@ -643,8 +981,177 @@ export class ReviewMonitoringService {
     return "LOW";
   }
 
-  private makeExternalRef(review: GoogleReview) {
-    const base = `${review.author_name ?? "anonymous"}|${review.time ?? "0"}|${review.text ?? ""}`;
+  private async resolveSelectedManagedBusiness(
+    workspaceId: string,
+    managedBusinessId?: string,
+  ) {
+    if (managedBusinessId) {
+      const selected = await reviewMonitoringRepository.getManagedBusiness(
+        workspaceId,
+        managedBusinessId,
+      );
+      if (selected) {
+        return selected;
+      }
+    }
+
+    const businesses = await reviewMonitoringRepository.listManagedBusinesses(workspaceId);
+    return businesses[0] ?? null;
+  }
+
+  private async fetchGooglePlacesReviews(placeId: string, accessToken?: string) {
+    let placeName: string | undefined;
+    let placeRating: number | undefined;
+    let reviews: GoogleReview[] = [];
+
+    if (accessToken) {
+      const v1Res = await fetch(`https://places.googleapis.com/v1/places/${placeId}`, {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "X-Goog-FieldMask": "displayName,rating,reviews",
+        },
+        cache: "no-store",
+      });
+
+      if (v1Res.ok) {
+        const v1Data = (await v1Res.json()) as {
+          displayName?: { text?: string };
+          rating?: number;
+          reviews?: Array<{
+            authorAttribution?: { displayName?: string };
+            text?: { text?: string };
+            rating?: number;
+            publishTime?: string;
+          }>;
+        };
+
+        placeName = v1Data.displayName?.text;
+        placeRating = v1Data.rating;
+        reviews =
+          v1Data.reviews?.map((review) => ({
+            author_name: review.authorAttribution?.displayName,
+            text: review.text?.text,
+            rating: review.rating,
+            time: this.toUnixSeconds(review.publishTime),
+          })) ?? [];
+      }
+    }
+
+    if (reviews.length > 0) {
+      return { name: placeName, rating: placeRating, reviews };
+    }
+
+    const apiKey = process.env.GOOGLE_PLACES_API_KEY;
+    if (!apiKey) {
+      throw new Error(
+        "Google auth missing for this user and GOOGLE_PLACES_API_KEY is not configured.",
+      );
+    }
+
+    const url = new URL("https://maps.googleapis.com/maps/api/place/details/json");
+    url.searchParams.set("place_id", placeId);
+    url.searchParams.set("fields", "name,rating,reviews");
+    url.searchParams.set("reviews_sort", "newest");
+    url.searchParams.set("key", apiKey);
+
+    const googleRes = await fetch(url.toString(), {
+      method: "GET",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      cache: "no-store",
+    });
+
+    if (!googleRes.ok) {
+      throw new Error("Failed to fetch Google place details");
+    }
+
+    const data = (await googleRes.json()) as {
+      status: string;
+      result?: {
+        name?: string;
+        rating?: number;
+        reviews?: GoogleReview[];
+      };
+      error_message?: string;
+    };
+
+    if (data.status !== "OK" || !data.result) {
+      throw new Error(data.error_message || "Google Places API request failed");
+    }
+
+    return {
+      name: data.result.name,
+      rating: data.result.rating,
+      reviews: data.result.reviews ?? [],
+    };
+  }
+
+  private async fetchGoogleBusinessProfileReviews(
+    accessToken: string,
+    locationName: string,
+  ) {
+    const response = await fetch(
+      `https://mybusiness.googleapis.com/v4/${locationName}/reviews?pageSize=5&orderBy=updateTime desc`,
+      {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+        cache: "no-store",
+      },
+    );
+
+    if (!response.ok) {
+      return { reviews: [] as GoogleReview[], rating: undefined as number | undefined };
+    }
+
+    const payload = (await response.json()) as GoogleLocationReviewsResponse;
+
+    return {
+      rating: payload.averageRating,
+      reviews:
+        payload.reviews?.map((review) => ({
+          author_name: review.reviewer?.displayName,
+          text: review.comment,
+          rating: this.googleStarRatingToNumber(review.starRating),
+          time: this.toUnixSeconds(review.createTime),
+          review_resource_name: review.name,
+          review_reply: review.reviewReply?.comment,
+          review_replied_at: review.reviewReply?.updateTime,
+        })) ?? [],
+    };
+  }
+
+  private googleStarRatingToNumber(
+    value: "ONE" | "TWO" | "THREE" | "FOUR" | "FIVE" | undefined,
+  ) {
+    const mapping = {
+      ONE: 1,
+      TWO: 2,
+      THREE: 3,
+      FOUR: 4,
+      FIVE: 5,
+    } as const;
+
+    return value ? mapping[value] : undefined;
+  }
+
+  private toUnixSeconds(iso: string | undefined) {
+    if (!iso) {
+      return undefined;
+    }
+
+    const ms = Date.parse(iso);
+    if (Number.isNaN(ms)) {
+      return undefined;
+    }
+
+    return Math.floor(ms / 1000);
+  }
+
+  private makeExternalRef(placeId: string, review: GoogleReview) {
+    const base = `${placeId}|${review.author_name ?? "anonymous"}|${review.time ?? "0"}|${review.text ?? ""}`;
     return crypto.createHash("sha256").update(base).digest("hex");
   }
 
