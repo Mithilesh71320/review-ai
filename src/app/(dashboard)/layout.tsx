@@ -1,43 +1,40 @@
-import type { ReactNode } from "react";
-import Link from "next/link";
-import { RedirectToSignIn, SignedIn, SignedOut } from "@clerk/nextjs";
+﻿import { Bell, Menu } from "lucide-react";
+import { AppSidebar } from "@/components/app-sidebar";
+import { DashboardPrefetcher } from "@/components/providers/dashboard-prefetcher";
+import { Button } from "@/components/ui/button";
 
-const navItems = [
-  { href: "/dashboard", label: "Dashboard" },
-  { href: "/reviews", label: "Reviews" },
-  { href: "/alerts", label: "Alerts" },
-  { href: "/settings", label: "Settings" },
-];
-
-export default function ProtectedLayout({ children }: { children: ReactNode }) {
+export default function DashboardLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
   return (
-    <>
-      <SignedOut>
-        <RedirectToSignIn />
-      </SignedOut>
-
-      <SignedIn>
-        <div className="min-h-screen bg-slate-100 text-slate-900">
-          <div className="mx-auto flex max-w-6xl flex-col gap-6 p-6 lg:flex-row">
-            <aside className="w-full rounded-2xl bg-white p-5 shadow-sm lg:w-64">
-              <h1 className="mb-5 text-xl font-bold">Review AI</h1>
-              <nav className="space-y-2">
-                {navItems.map((item) => (
-                  <Link
-                    key={item.href}
-                    href={item.href}
-                    className="block rounded-lg px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-100"
-                  >
-                    {item.label}
-                  </Link>
-                ))}
-              </nav>
-            </aside>
-
-            <main className="flex-1 rounded-2xl bg-white p-6 shadow-sm">{children}</main>
+    <div className="flex h-screen bg-[#F8F6F1]">
+      <DashboardPrefetcher />
+      <AppSidebar />
+      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+        <header className="flex h-16 items-center justify-between border-b border-[#E7E5E4] bg-white px-4 md:px-6">
+          <Button variant="ghost" size="icon" className="md:hidden">
+            <Menu className="h-5 w-5" />
+          </Button>
+          <div className="hidden md:block" />
+          <div className="flex items-center gap-4">
+            <Button variant="ghost" size="icon" className="relative">
+              <Bell className="h-5 w-5" />
+              <span className="absolute right-1 top-1 h-2 w-2 rounded-full bg-[#EF4444]" />
+            </Button>
+            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-[#0D9488] text-xs text-white">
+              JD
+            </div>
           </div>
-        </div>
-      </SignedIn>
-    </>
+        </header>
+        <main className="flex-1 overflow-auto bg-[#F8F6F1] p-4 md:p-8">
+          {children}
+        </main>
+      </div>
+    </div>
   );
 }
+
+
+
