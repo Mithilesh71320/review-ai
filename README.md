@@ -1,17 +1,29 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Review AI - Monitoring & Analysis Platform
 
-## Getting Started
+Review AI is a sophisticated monitoring tool designed to aggregate, analyze, and provide actionable insights from user reviews using advanced Artificial Intelligence.
 
-First, run the development server:
+## 🚀 Tech Stack
 
+*   **Framework:** Next.js (App Router)
+*   **AI Engine:** Google Generative AI SDK (Gemini / Vertex AI)
+*   **Blockchain:** Solana Web3.js (v1.x)
+*   **Configuration:** Cosmiconfig
+*   **Tooling:** TypeScript, ESLint (import, jsx-a11y), Babel Macros
+
+## 🛠️ Getting Started
+
+### Prerequisites
+
+*   Node.js 18+ 
+*   A Google Cloud Project (for Vertex AI) or a Gemini API Key.
+*   (Optional) A Solana RPC endpoint if interacting with the blockchain.
+
+### Installation
+
+1. Clone the repository.
+2. Install dependencies:
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm install
 ```
 
 Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
@@ -35,3 +47,4 @@ The easiest way to deploy your Next.js app is to use the [Vercel Platform](https
 
 Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
 
+see this full hierarchy check whole project & create a readme file for this project for a developer that document should be enought to give KT about the apis & all

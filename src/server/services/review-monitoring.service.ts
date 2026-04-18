@@ -861,6 +861,14 @@ export class ReviewMonitoringService {
         ]).then((records) => records[0] ?? null);
 
     let storedCount = 0;
+    const existingReviews = managedBusinessRecord
+      ? await reviewMonitoringRepository.listReviews(workspace.id, managedBusinessRecord.id)
+      : [];
+    const existingExternalRefs = new Set(
+      existingReviews
+        .filter((record) => record.source === "GOOGLE" && record.externalRef)
+        .map((record) => record.externalRef as string),
+    );
 
     for (const review of reviews) {
       if (!review.text || typeof review.rating !== "number") {
@@ -872,29 +880,29 @@ export class ReviewMonitoringService {
       }
       const externalRef = review.review_resource_name ?? this.makeExternalRef(placeId, review);
       const sentiment = this.sentimentFromRating(review.rating);
+      const createdAt = review.time ? new Date(review.time * 1000) : new Date();
+      const existedBefore = existingExternalRefs.has(externalRef);
 
-      try {
-        await reviewMonitoringRepository.createReview({
-          business: { connect: { id: workspace.id } },
-          managedBusiness: { connect: { id: managedBusinessRecord.id } },
-          author: review.author_name?.trim() || "Anonymous",
-          text: review.text,
-          rating: review.rating,
-          sentiment,
-          source: "GOOGLE",
-          externalRef,
-          reviewResourceName: review.review_resource_name ?? null,
-          reviewReply: review.review_reply ?? null,
-          reviewRepliedAt: review.review_replied_at
-            ? new Date(review.review_replied_at)
-            : null,
-          createdAt: review.time
-            ? new Date(review.time * 1000)
-            : new Date(),
-        });
+      await reviewMonitoringRepository.upsertReview({
+        businessId: workspace.id,
+        managedBusinessId: managedBusinessRecord.id,
+        author: review.author_name?.trim() || "Anonymous",
+        text: review.text,
+        rating: review.rating,
+        sentiment,
+        source: "GOOGLE",
+        externalRef,
+        reviewResourceName: review.review_resource_name ?? null,
+        reviewReply: review.review_reply ?? null,
+        reviewRepliedAt: review.review_replied_at
+          ? new Date(review.review_replied_at)
+          : null,
+        createdAt,
+      });
 
+      if (!existedBefore) {
+        existingExternalRefs.add(externalRef);
         storedCount += 1;
-
         if (review.rating <= 2) {
           await reviewMonitoringRepository.createAlert(workspace.id, {
             managedBusinessId: managedBusinessRecord.id,
@@ -905,8 +913,6 @@ export class ReviewMonitoringService {
             isRead: false,
           });
         }
-      } catch {
-        // ignore duplicate review upserts based on unique externalRef
       }
     }
 

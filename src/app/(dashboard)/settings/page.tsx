@@ -1,121 +1,67 @@
 "use client";
 
 import { useState } from "react";
-import {
-  useMutation,
-  useQuery,
-  useQueryClient,
-} from "@tanstack/react-query";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Camera, Plus, Trash2 } from "lucide-react";
+import Link from "next/link";
+import { BillingPlanCards } from "@/components/billing-plan-cards";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Button } from "@/components/ui/button";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import { Separator } from "@/components/ui/separator";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { cn } from "@/lib/utils";
 import { fetchJson } from "@/lib/api";
 import { queryKeys } from "@/lib/query-keys";
-import { X } from "lucide-react";
+import { getBillingPlans } from "@/lib/billing-plans";
 
 type SettingsResponse = {
-  business: {
-    name: string;
-    email: string;
-    phone: string;
-    website: string;
-    placeId: string;
-  };
+  business: { name: string; email: string; phone: string; website: string; placeId: string };
   notifications: {
     emailNotifications: boolean;
     pushNotifications: boolean;
     smsNotifications: boolean;
     weeklyDigest: boolean;
   };
-  ai: {
-    provider: string;
-    sentimentModel: string;
-    analysisLanguage: string;
-    autoRespond: boolean;
-  };
-  sources: Array<{
-    source: string;
-    key: "GOOGLE" | "YELP" | "FACEBOOK" | "TRIPADVISOR";
-    connected: boolean;
-  }>;
-  businesses: Array<{
-    id?: string;
-    name: string;
-    placeId: string;
-    accountName?: string | null;
-    locationName?: string | null;
-    mapsUri?: string | null;
-  }>;
+  ai: { provider: string; sentimentModel: string; analysisLanguage: string; autoRespond: boolean };
+  sources: Array<{ source: string; key: "GOOGLE" | "YELP" | "FACEBOOK" | "TRIPADVISOR"; connected: boolean }>;
+  businesses: Array<{ id?: string; name: string; placeId: string; accountName?: string | null; locationName?: string | null; mapsUri?: string | null }>;
 };
 
 type GoogleBusinessesResponse = {
   connected: boolean;
-  businesses: Array<{
-    accountName: string;
-    locationName: string;
-    title: string;
-    placeId: string | null;
-    address: string | null;
-    mapsUri: string | null;
-  }>;
+  businesses: Array<{ accountName: string; locationName: string; title: string; placeId: string | null; address: string | null; mapsUri: string | null }>;
 };
 
 type GooglePlaceSearchResponse = {
-  places: Array<{
-    placeId: string;
-    name: string;
-    address: string | null;
-    rating: number | null;
-    userRatingCount: number | null;
-  }>;
+  places: Array<{ placeId: string; name: string; address: string | null; rating: number | null; userRatingCount: number | null }>;
 };
 
-type GoogleOAuthStartResponse = {
-  authUrl: string;
-};
+type GoogleOAuthStartResponse = { authUrl: string };
 
 const initialState: SettingsResponse = {
-  business: {
-    name: "",
-    email: "",
-    phone: "",
-    website: "",
-    placeId: "",
-  },
-  notifications: {
-    emailNotifications: true,
-    pushNotifications: true,
-    smsNotifications: false,
-    weeklyDigest: true,
-  },
-  ai: {
-    provider: "gemini",
-    sentimentModel: "balanced",
-    analysisLanguage: "en",
-    autoRespond: true,
-  },
+  business: { name: "", email: "", phone: "", website: "", placeId: "" },
+  notifications: { emailNotifications: true, pushNotifications: true, smsNotifications: false, weeklyDigest: true },
+  ai: { provider: "gemini", sentimentModel: "balanced", analysisLanguage: "en", autoRespond: true },
   sources: [],
   businesses: [],
 };
 
+const tabs = [
+  { id: "profile", label: "Profile" },
+  { id: "business", label: "Business Profiles" },
+  { id: "connections", label: "Connections" },
+  { id: "notifications", label: "Notifications" },
+  { id: "ai", label: "AI Config" },
+  { id: "billing", label: "Billing" },
+];
+
 export default function SettingsPage() {
   const queryClient = useQueryClient();
+  const billingPlans = getBillingPlans();
+  const [activeTab, setActiveTab] = useState("profile");
   const [draft, setDraft] = useState<SettingsResponse | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [placeSearchQuery, setPlaceSearchQuery] = useState("");
@@ -129,17 +75,13 @@ export default function SettingsPage() {
 
   const googleBusinessesQuery = useQuery({
     queryKey: queryKeys.googleBusinesses,
-    queryFn: () =>
-      fetchJson<GoogleBusinessesResponse>("/api/google/businesses", { cache: "no-store" }),
+    queryFn: () => fetchJson<GoogleBusinessesResponse>("/api/google/businesses", { cache: "no-store" }),
   });
 
   const placeSearchResultsQuery = useQuery({
     queryKey: queryKeys.googlePlaceSearch(placeSearchQuery),
     queryFn: () =>
-      fetchJson<GooglePlaceSearchResponse>(
-        `/api/google/places/search?query=${encodeURIComponent(placeSearchQuery)}`,
-        { cache: "no-store" },
-      ),
+      fetchJson<GooglePlaceSearchResponse>(`/api/google/places/search?query=${encodeURIComponent(placeSearchQuery)}`, { cache: "no-store" }),
     enabled: placeSearchQuery.trim().length >= 3,
   });
 
@@ -162,592 +104,297 @@ export default function SettingsPage() {
       setMessage("Settings saved.");
       await queryClient.invalidateQueries({ queryKey: queryKeys.settings });
     },
-    onError: (error) => {
-      setMessage(error instanceof Error ? error.message : "Failed to save settings.");
-    },
+    onError: (error) => setMessage(error instanceof Error ? error.message : "Failed to save settings."),
   });
 
   const connectGoogleMutation = useMutation({
-    mutationFn: () =>
-      fetchJson<GoogleOAuthStartResponse>("/api/google/oauth/start", {
-        cache: "no-store",
-      }),
-    onSuccess: ({ authUrl }) => {
-      window.location.assign(authUrl);
-    },
-    onError: (error) => {
-      setMessage(error instanceof Error ? error.message : "Failed to start Google OAuth.");
-    },
+    mutationFn: () => fetchJson<GoogleOAuthStartResponse>("/api/google/oauth/start", { cache: "no-store" }),
+    onSuccess: ({ authUrl }) => window.location.assign(authUrl),
+    onError: (error) => setMessage(error instanceof Error ? error.message : "Failed to start Google OAuth."),
   });
 
-  const applyBusinessSelection = (business: {
-    name: string;
-    placeId: string;
-    accountName?: string | null;
-    locationName?: string | null;
-    mapsUri?: string | null;
-  }) => {
+  const applyBusinessSelection = (business: SettingsResponse["businesses"][number]) => {
     updateState((current) => ({
       ...current,
       businesses: current.businesses.some((item) => item.placeId === business.placeId)
-        ? current.businesses.map((item) =>
-            item.placeId === business.placeId ? { ...item, ...business } : item,
-          )
+        ? current.businesses.map((item) => (item.placeId === business.placeId ? { ...item, ...business } : item))
         : [...current.businesses, business],
-      sources: current.sources.map((source) =>
-        source.key === "GOOGLE" ? { ...source, connected: true } : source,
-      ),
+      sources: current.sources.map((source) => (source.key === "GOOGLE" ? { ...source, connected: true } : source)),
     }));
     setSelectionDirty(true);
     setMessage(`${business.name} added to monitored businesses.`);
   };
 
   const removeBusiness = (placeId: string) => {
-    updateState((current) => ({
-      ...current,
-      businesses: current.businesses.filter((business) => business.placeId !== placeId),
-    }));
+    updateState((current) => ({ ...current, businesses: current.businesses.filter((business) => business.placeId !== placeId) }));
     setSelectionDirty(true);
     setMessage("Business removed from monitored businesses.");
   };
 
-  const isLoading = settingsQuery.isPending;
-  const settingsError =
-    settingsQuery.error instanceof Error ? settingsQuery.error.message : null;
-  const businessesError =
-    googleBusinessesQuery.error instanceof Error
-      ? googleBusinessesQuery.error.message
-      : null;
-  const placeSearchError =
-    placeSearchResultsQuery.error instanceof Error
-      ? placeSearchResultsQuery.error.message
-      : null;
   const placeSuggestions = placeSearchResultsQuery.data?.places ?? [];
 
-  const selectPlaceSuggestion = (place: GooglePlaceSearchResponse["places"][number]) => {
-    setNewBusiness({
-      name: place.name,
-      placeId: place.placeId,
-    });
-    setPlaceSearchQuery("");
-    setMessage("Place selected. Click + Add Business to save it.");
-  };
+  if (settingsQuery.isPending) return <div className="text-sm text-[#78716C]">Loading settings...</div>;
 
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-3xl font-bold tracking-tight text-foreground">Settings</h1>
-        <p className="text-muted-foreground">
-          Manage your account, Google business connection, and application preferences.
-        </p>
+        <h1 className="text-[28px] text-[#1C1917]" style={{ fontFamily: "Playfair Display", fontWeight: 600 }}>Settings</h1>
+        <p className="mt-1 text-sm text-[#78716C]">Manage your account and preferences</p>
       </div>
 
-      {isLoading && <div className="text-sm text-muted-foreground">Loading settings...</div>}
-      {settingsError && (
-        <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-4 text-sm text-destructive">
-          {settingsError}
-        </div>
-      )}
-      {message && (
-        <div className="rounded-lg border border-border bg-card p-4 text-sm text-foreground">
-          {message}
-        </div>
-      )}
+      {settingsQuery.error && <div className="rounded-lg border border-[#EF4444]/40 bg-[#FEE2E2] p-4 text-sm text-[#EF4444]">{settingsQuery.error instanceof Error ? settingsQuery.error.message : "Failed to load settings"}</div>}
+      {message && <div className="rounded-lg border border-[#E7E5E4] bg-white p-4 text-sm text-[#1C1917]">{message}</div>}
 
-      {!isLoading && (
-        <>
-          <Card>
-            <CardHeader>
-              <CardTitle>User Profile</CardTitle>
-              <CardDescription>
-                Update the account details for the signed-in user.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid gap-4 md:grid-cols-2">
-                <div className="space-y-2">
-                  <Label htmlFor="business-name">Username</Label>
-                  <Input
-                    id="business-name"
-                    value={state.business.name}
-                    onChange={(e) =>
-                      updateState((current) => ({
-                        ...current,
-                        business: { ...current.business, name: e.target.value },
-                      }))
-                    }
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="email">Email</Label>
-                  <Input
-                    id="email"
-                    type="email"
-                    value={state.business.email}
-                    onChange={(e) =>
-                      updateState((current) => ({
-                        ...current,
-                        business: { ...current.business, email: e.target.value },
-                      }))
-                    }
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="phone">Phone</Label>
-                  <Input
-                    id="phone"
-                    value={state.business.phone}
-                    onChange={(e) =>
-                      updateState((current) => ({
-                        ...current,
-                        business: { ...current.business, phone: e.target.value },
-                      }))
-                    }
-                  />
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+      <div className="flex w-full flex-wrap justify-start border-b border-[#E7E5E4]">
+        {tabs.map((tab) => (
+          <button
+            key={tab.id}
+            onClick={() => setActiveTab(tab.id)}
+            className={cn(
+              "border-b-2 border-transparent px-4 pb-3 text-sm font-medium text-[#78716C]",
+              activeTab === tab.id && "border-[#0D9488] text-[#0D9488]",
+            )}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
 
-          <Card>
-            <CardHeader>
-              <CardTitle>Business Profiles</CardTitle>
-              <CardDescription>
-                Add and manage multiple businesses for this account using Google search
-                or manual place IDs.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="rounded-lg border border-border/60 bg-muted/20 p-4">
-                <p className="text-sm font-medium text-foreground">How this works</p>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  Search Google Places, click a result to add it, or enter the business
-                  name and place ID manually. You can keep adding multiple businesses for
-                  the same user.
-                </p>
-              </div>
-
-              <div className="grid gap-4 md:grid-cols-3 md:items-start">
-                <div className="space-y-2">
-                  <Label htmlFor="new-business-name">Business Name</Label>
-                  <Input
-                    id="new-business-name"
-                    value={newBusiness.name}
-                    onChange={(event) =>
-                      setNewBusiness((current) => ({ ...current, name: event.target.value }))
-                    }
-                  />
-                  <Button
-                    className="w-full md:w-auto"
-                    onClick={() => {
-                      if (!newBusiness.name.trim() || !newBusiness.placeId.trim()) {
-                        setMessage("Business name and place ID are required to add a business.");
-                        return;
-                      }
-
-                      applyBusinessSelection({
-                        name: newBusiness.name.trim(),
-                        placeId: newBusiness.placeId.trim(),
-                      });
-                      setNewBusiness({ name: "", placeId: "" });
-                    }}
-                  >
-                    + Add Business
-                  </Button>
+      {activeTab === "profile" && (
+        <div className="space-y-6">
+          <Card className="rounded-xl border-[#E7E5E4] bg-white p-6">
+            <div className="space-y-6">
+              <div className="flex flex-col gap-6 md:flex-row">
+                <div className="relative h-20 w-20 shrink-0">
+                  <div className="flex h-20 w-20 items-center justify-center rounded-full bg-[#0D9488] text-2xl text-white">JD</div>
+                  <button className="absolute bottom-0 right-0 flex h-6 w-6 items-center justify-center rounded-full bg-[#0D9488] hover:bg-[#134E4A]">
+                    <Camera className="h-3 w-3 text-white" />
+                  </button>
                 </div>
-                <div className="space-y-2">
-                  <Label htmlFor="place-search">Search Google Places</Label>
-                  <div className="relative">
-                    <Input
-                      id="place-search"
-                      placeholder="Search by business name or address"
-                      value={placeSearchQuery}
-                      onChange={(event) => setPlaceSearchQuery(event.target.value)}
-                      autoComplete="off"
-                    />
-                    {placeSearchQuery.trim().length >= 3 && (
-                      <div className="absolute z-20 mt-2 max-h-72 w-full overflow-y-auto rounded-xl border border-border bg-popover shadow-lg">
-                        {placeSearchResultsQuery.isFetching && (
-                          <div className="px-4 py-3 text-sm text-muted-foreground">
-                            Searching places...
-                          </div>
-                        )}
-                        {!placeSearchResultsQuery.isFetching && placeSearchError && (
-                          <div className="px-4 py-3 text-sm text-destructive">
-                            {placeSearchError}
-                          </div>
-                        )}
-                        {!placeSearchResultsQuery.isFetching &&
-                          !placeSearchError &&
-                          placeSuggestions.map((place) => (
-                            <button
-                              key={place.placeId}
-                              type="button"
-                              className="block w-full border-b border-border px-4 py-3 text-left last:border-b-0 hover:bg-accent/40"
-                              onClick={() => selectPlaceSuggestion(place)}
-                            >
-                              <p className="font-medium text-foreground">{place.name}</p>
-                              <p className="text-sm text-muted-foreground">
-                                {place.address ?? "No address available"}
-                              </p>
-                              <p className="text-xs text-muted-foreground">
-                                Place ID: {place.placeId}
-                              </p>
-                            </button>
-                          ))}
-                        {!placeSearchResultsQuery.isFetching &&
-                          !placeSearchError &&
-                          placeSuggestions.length === 0 && (
-                            <div className="px-4 py-3 text-sm text-muted-foreground">
-                              No places found.
-                            </div>
-                          )}
-                      </div>
-                    )}
+                <div className="grid flex-1 gap-4 md:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label htmlFor="fullname" className="text-sm">Full Name</Label>
+                    <Input id="fullname" value={state.business.name} onChange={(event) => updateState((current) => ({ ...current, business: { ...current.business, name: event.target.value } }))} className="rounded-lg border-[#E7E5E4]" />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="phone" className="text-sm">Phone</Label>
+                    <Input id="phone" value={state.business.phone} onChange={(event) => updateState((current) => ({ ...current, business: { ...current.business, phone: event.target.value } }))} className="rounded-lg border-[#E7E5E4]" />
                   </div>
                 </div>
-                <div className="space-y-2">
-                  <Label htmlFor="new-business-place-id">Google Place ID</Label>
-                  <Input
-                    id="new-business-place-id"
-                    value={newBusiness.placeId}
-                    onChange={(event) =>
-                      setNewBusiness((current) => ({ ...current, placeId: event.target.value }))
-                    }
-                  />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="email" className="text-sm">Email</Label>
+                <div className="flex gap-2">
+                  <Input id="email" value={state.business.email} onChange={(event) => updateState((current) => ({ ...current, business: { ...current.business, email: event.target.value } }))} className="flex-1 rounded-lg border-[#E7E5E4]" />
+                  <Badge variant="secondary" className="flex h-10 items-center border-0 bg-[#F8F6F1] px-3 text-[#78716C]">User Profile</Badge>
                 </div>
               </div>
+            </div>
+          </Card>
+          <div className="flex justify-end">
+            <Button className="bg-[#0D9488] text-white hover:bg-[#134E4A]" disabled={saveMutation.isPending} onClick={() => void saveMutation.mutateAsync()}>
+              {saveMutation.isPending ? "Saving..." : "Save Changes"}
+            </Button>
+          </div>
+        </div>
+      )}
 
-              {state.businesses.length > 0 ? (
+      {activeTab === "business" && (
+        <div className="space-y-6">
+          {state.businesses.map((business) => (
+            <Card key={business.id ?? business.placeId} className="rounded-xl border-[#E7E5E4] bg-white p-6">
+              <div className="flex items-start justify-between">
                 <div className="space-y-2">
-                  {state.businesses.map((business) => (
-                    <div
-                      key={business.id ?? business.placeId}
-                      className="flex items-start justify-between gap-3 rounded-lg border border-border bg-background px-4 py-3"
-                    >
-                      <div>
-                        <p className="font-medium text-foreground">{business.name}</p>
-                        <p className="text-xs text-muted-foreground">{business.placeId}</p>
-                      </div>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        aria-label={`Remove ${business.name}`}
-                        onClick={() => removeBusiness(business.placeId)}
-                      >
-                        <X className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  ))}
+                  <h3 className="text-base font-semibold">{business.name}</h3>
+                  <p className="font-mono text-xs text-[#78716C]">Place ID: {business.placeId}</p>
+                  <Badge className="border-0 bg-[#10B981] text-white">Google Connected</Badge>
                 </div>
-              ) : (
-                <p className="text-sm text-muted-foreground">
-                  No monitored businesses added yet.
-                </p>
-              )}
-
-              <Separator />
-
-              <div className="flex flex-wrap gap-3">
-                <Button
-                  variant="outline"
-                  disabled={connectGoogleMutation.isPending}
-                  onClick={() => {
-                    setMessage(null);
-                    void connectGoogleMutation.mutateAsync();
-                  }}
-                >
-                  {connectGoogleMutation.isPending
-                    ? "Connecting..."
-                    : "Connect Google Account"}
-                </Button>
-                <Button
-                  variant="secondary"
-                  disabled={googleBusinessesQuery.isFetching}
-                  onClick={() => void googleBusinessesQuery.refetch()}
-                >
-                  {googleBusinessesQuery.isFetching
-                    ? "Refreshing..."
-                    : "Refresh Google Businesses"}
-                </Button>
-                <Button
-                  disabled={!selectionDirty || saveMutation.isPending}
-                  onClick={() => {
-                    setMessage(null);
-                    void saveMutation.mutateAsync();
-                  }}
-                >
-                  {saveMutation.isPending ? "Saving..." : "Save Business List"}
+                <Button variant="ghost" size="icon" className="text-[#EF4444]" onClick={() => removeBusiness(business.placeId)}>
+                  <Trash2 className="h-4 w-4" />
                 </Button>
               </div>
+            </Card>
+          ))}
 
-              {businessesError && (
-                <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
-                  {businessesError}
-                </div>
-              )}
-
-              {googleBusinessesQuery.data?.connected === false && (
-                <div className="rounded-lg border border-warning/40 bg-warning/10 p-3 text-sm text-foreground">
-                  Google Business account is not connected yet. Use OAuth to load your
-                  business locations automatically.
-                </div>
-              )}
-
-              {googleBusinessesQuery.data?.businesses &&
-                googleBusinessesQuery.data.businesses.length > 0 && (
-                  <div className="space-y-3">
-                    <div>
-                      <p className="text-sm font-medium text-foreground">
-                        Businesses from your Google account
-                      </p>
-                      <p className="text-sm text-muted-foreground">
-                        Click any business to add it to this user&apos;s monitored list.
-                      </p>
-                    </div>
-                    <div className="space-y-2">
-                      {googleBusinessesQuery.data.businesses.map((business) => (
-                        <button
-                          key={business.locationName}
-                          type="button"
-                          className="w-full rounded-lg border border-border bg-background px-4 py-3 text-left transition hover:border-primary/40 hover:bg-accent/30"
-                          onClick={() => {
-                            if (!business.placeId) {
-                              setMessage(
-                                `${business.title} does not expose a Google Place ID.`,
-                              );
-                              return;
-                            }
-
-                            applyBusinessSelection({
-                              name: business.title,
-                              placeId: business.placeId,
-                              accountName: business.accountName,
-                              locationName: business.locationName,
-                              mapsUri: business.mapsUri,
-                            });
-                          }}
-                        >
-                          <div className="flex items-center justify-between gap-4">
-                            <div>
-                              <p className="font-medium text-foreground">{business.title}</p>
-                              <p className="text-sm text-muted-foreground">
-                                {business.address ?? business.accountName}
-                              </p>
-                              <p className="text-xs text-muted-foreground">
-                                {business.placeId ?? "No place ID available"}
-                              </p>
-                            </div>
-                            <span className="text-sm text-primary">Add business</span>
-                          </div>
-                        </button>
-                      ))}
-                    </div>
+          <Card className="rounded-xl border-[#E7E5E4] bg-white p-6">
+            <h3 className="mb-4 text-base font-semibold">Add New Business</h3>
+            <div className="grid gap-4 md:grid-cols-3">
+              <div className="space-y-2">
+                <Label htmlFor="business-name" className="text-sm">Business Name</Label>
+                <Input id="business-name" placeholder="Enter name" value={newBusiness.name} onChange={(event) => setNewBusiness((current) => ({ ...current, name: event.target.value }))} className="rounded-lg border-[#E7E5E4]" />
+              </div>
+              <div className="relative space-y-2">
+                <Label htmlFor="google-search" className="text-sm">Search Google Places</Label>
+                <Input id="google-search" placeholder="Search..." value={placeSearchQuery} onChange={(event) => setPlaceSearchQuery(event.target.value)} className="rounded-lg border-[#E7E5E4]" />
+                {placeSearchQuery.trim().length >= 3 && (
+                  <div className="absolute z-20 mt-2 max-h-72 w-full overflow-y-auto rounded-xl border border-[#E7E5E4] bg-white shadow-lg">
+                    {placeSearchResultsQuery.isFetching && <div className="px-4 py-3 text-sm text-[#78716C]">Searching...</div>}
+                    {placeSearchResultsQuery.error && <div className="px-4 py-3 text-sm text-[#EF4444]">{placeSearchResultsQuery.error instanceof Error ? placeSearchResultsQuery.error.message : "Search failed"}</div>}
+                    {placeSuggestions.map((place) => (
+                      <button key={place.placeId} type="button" className="block w-full border-b border-[#E7E5E4] px-4 py-3 text-left last:border-0 hover:bg-[#F0FDF9]" onClick={() => { setNewBusiness({ name: place.name, placeId: place.placeId }); setPlaceSearchQuery(""); }}>
+                        <p className="text-sm font-semibold text-[#1C1917]">{place.name}</p>
+                        <p className="text-xs text-[#78716C]">{place.address ?? "No address available"}</p>
+                      </button>
+                    ))}
                   </div>
                 )}
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Review Sources</CardTitle>
-              <CardDescription>Connect and manage your review platforms.</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              {state.sources.map((source) => (
-                <div
-                  key={source.key}
-                  className="flex items-center justify-between border-b border-border pb-4 last:border-0 last:pb-0"
-                >
-                  <div className="space-y-0.5">
-                    <p className="text-sm font-medium text-foreground">{source.source}</p>
-                    <p className="text-sm text-muted-foreground">
-                      {source.connected ? "Connected and syncing" : "Not connected"}
-                    </p>
-                  </div>
-                  <Switch
-                    checked={source.connected}
-                    onCheckedChange={(checked) =>
-                      updateState((current) => ({
-                        ...current,
-                        sources: current.sources.map((item) =>
-                          item.key === source.key
-                            ? { ...item, connected: checked }
-                            : item,
-                        ),
-                      }))
-                    }
-                  />
-                </div>
-              ))}
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Notifications</CardTitle>
-              <CardDescription>Configure how you receive notifications.</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              {[
-                {
-                  key: "emailNotifications",
-                  label: "Email notifications",
-                  description: "Receive alerts via email",
-                },
-                {
-                  key: "pushNotifications",
-                  label: "Push notifications",
-                  description: "Browser push notifications",
-                },
-                {
-                  key: "smsNotifications",
-                  label: "SMS notifications",
-                  description: "Text message alerts",
-                },
-                {
-                  key: "weeklyDigest",
-                  label: "Weekly digest",
-                  description: "Summary email every Monday",
-                },
-              ].map((item) => (
-                <div
-                  key={item.key}
-                  className="flex items-center justify-between border-b border-border pb-4 last:border-0 last:pb-0"
-                >
-                  <div className="space-y-0.5">
-                    <p className="text-sm font-medium text-foreground">{item.label}</p>
-                    <p className="text-sm text-muted-foreground">{item.description}</p>
-                  </div>
-                  <Switch
-                    checked={
-                      state.notifications[
-                        item.key as keyof SettingsResponse["notifications"]
-                      ]
-                    }
-                    onCheckedChange={(checked) =>
-                      updateState((current) => ({
-                        ...current,
-                        notifications: {
-                          ...current.notifications,
-                          [item.key]: checked,
-                        },
-                      }))
-                    }
-                  />
-                </div>
-              ))}
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>AI Configuration</CardTitle>
-              <CardDescription>Customize AI analysis behavior.</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="space-y-2">
-                <Label>AI Provider</Label>
-                <Select
-                  value={state.ai.provider}
-                  onValueChange={(value) =>
-                    updateState((current) => ({
-                      ...current,
-                      ai: { ...current.ai, provider: value },
-                    }))
-                  }
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="gemini">Gemini</SelectItem>
-                    <SelectItem value="openai">OpenAI</SelectItem>
-                  </SelectContent>
-                </Select>
               </div>
-
               <div className="space-y-2">
-                <Label>Sentiment Analysis Model</Label>
-                <Select
-                  value={state.ai.sentimentModel}
-                  onValueChange={(value) =>
-                    updateState((current) => ({
-                      ...current,
-                      ai: { ...current.ai, sentimentModel: value },
-                    }))
-                  }
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="conservative">Conservative</SelectItem>
-                    <SelectItem value="balanced">Balanced</SelectItem>
-                    <SelectItem value="aggressive">Aggressive</SelectItem>
-                  </SelectContent>
-                </Select>
+                <Label htmlFor="place-id" className="text-sm">Place ID</Label>
+                <Input id="place-id" placeholder="Auto-filled" value={newBusiness.placeId} onChange={(event) => setNewBusiness((current) => ({ ...current, placeId: event.target.value }))} className="rounded-lg border-[#E7E5E4]" />
               </div>
+            </div>
+            <Button className="mt-4 bg-[#0D9488] text-white hover:bg-[#134E4A]" onClick={() => {
+              if (!newBusiness.name.trim() || !newBusiness.placeId.trim()) { setMessage("Business name and place ID are required."); return; }
+              applyBusinessSelection({ name: newBusiness.name.trim(), placeId: newBusiness.placeId.trim() });
+              setNewBusiness({ name: "", placeId: "" });
+            }}>
+              <Plus className="mr-2 h-4 w-4" /> Add Business
+            </Button>
+          </Card>
 
-              <div className="space-y-2">
-                <Label>Analysis Language</Label>
-                <Select
-                  value={state.ai.analysisLanguage}
-                  onValueChange={(value) =>
-                    updateState((current) => ({
-                      ...current,
-                      ai: { ...current.ai, analysisLanguage: value },
-                    }))
-                  }
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
+          <Card className="rounded-xl border-[#0D9488] bg-[#F0FDF9] p-6">
+            <div className="flex items-center gap-4">
+              <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-white font-bold text-[#4285F4]">G</div>
+              <div className="flex-1">
+                <h3 className="text-base font-semibold">Connect Google Account</h3>
+                <p className="text-sm text-[#78716C]">Link your Google Business Profile to sync reviews automatically</p>
+              </div>
+              <Button className="bg-[#0D9488] text-white hover:bg-[#134E4A]" disabled={connectGoogleMutation.isPending} onClick={() => void connectGoogleMutation.mutateAsync()}>
+                {connectGoogleMutation.isPending ? "Connecting..." : "Connect"}
+              </Button>
+            </div>
+          </Card>
+
+          {googleBusinessesQuery.data?.businesses.length ? (
+            <div className="space-y-3">
+              {googleBusinessesQuery.data.businesses.map((business) => (
+                <button key={business.locationName} className="w-full rounded-xl border border-[#E7E5E4] bg-white p-4 text-left hover:bg-[#F0FDF9]" onClick={() => business.placeId && applyBusinessSelection({ name: business.title, placeId: business.placeId, accountName: business.accountName, locationName: business.locationName, mapsUri: business.mapsUri })}>
+                  <p className="font-semibold text-[#1C1917]">{business.title}</p>
+                  <p className="text-sm text-[#78716C]">{business.address ?? business.accountName}</p>
+                </button>
+              ))}
+            </div>
+          ) : null}
+
+          <div className="flex justify-end gap-3">
+            <Button variant="outline" onClick={() => void googleBusinessesQuery.refetch()}>Refresh Google Businesses</Button>
+            <Button className="bg-[#0D9488] text-white hover:bg-[#134E4A]" disabled={saveMutation.isPending || !selectionDirty} onClick={() => void saveMutation.mutateAsync()}>
+              {saveMutation.isPending ? "Saving..." : "Save Business List"}
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {activeTab === "connections" && (
+        <div className="space-y-4">
+          {state.sources.map((source) => (
+            <Card key={source.key} className="rounded-xl border-[#E7E5E4] bg-white p-6">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-4">
+                  <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-[#4285F4]/10">
+                    <div className="h-6 w-6 rounded bg-[#4285F4]" />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-semibold">{source.source}</h3>
+                    <p className="text-sm text-[#78716C]">{source.connected ? <span className="text-[#10B981]">Connected · Syncing</span> : "Not connected"}</p>
+                  </div>
+                </div>
+                <Button variant={source.connected ? "outline" : "default"} className={!source.connected ? "bg-[#0D9488] text-white hover:bg-[#134E4A]" : ""}>{source.connected ? "Disconnect" : "Connect"}</Button>
+              </div>
+            </Card>
+          ))}
+        </div>
+      )}
+
+      {activeTab === "notifications" && (
+        <Card className="rounded-xl border-[#E7E5E4] bg-white p-6">
+          <div className="space-y-4">
+            {[
+              ["emailNotifications", "New review notifications", "Get notified when you receive a new review"],
+              ["pushNotifications", "Negative review alerts", "Immediate notification for 1-2 star reviews"],
+              ["smsNotifications", "Rating drop alerts", "Alert when your rating decreases"],
+              ["weeklyDigest", "Weekly summary", "Receive a weekly digest of your review activity"],
+            ].map(([key, label, description]) => (
+              <div key={key} className="flex items-center justify-between border-b border-[#E7E5E4] py-3 last:border-0">
+                <div>
+                  <p className="text-sm font-medium">{label}</p>
+                  <p className="text-xs text-[#78716C]">{description}</p>
+                </div>
+                <Switch checked={state.notifications[key as keyof SettingsResponse["notifications"]]} onCheckedChange={(checked) => updateState((current) => ({ ...current, notifications: { ...current.notifications, [key]: checked } }))} />
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
+
+      {activeTab === "ai" && (
+        <div className="space-y-6">
+          <Card className="rounded-xl border-[#E7E5E4] bg-white p-6">
+            <div className="space-y-6">
+              <div>
+                <h3 className="mb-4 text-base font-semibold">AI Provider</h3>
+                <div className="grid gap-4 md:grid-cols-2">
+                  {["gemini", "openai"].map((provider) => (
+                    <button key={provider} className={cn("rounded-lg border-2 p-4 text-left transition-colors", state.ai.provider === provider ? "border-[#0D9488] bg-[#F0FDF9]" : "border-[#E7E5E4] bg-white hover:border-[#0D9488]")} onClick={() => updateState((current) => ({ ...current, ai: { ...current.ai, provider } }))}>
+                      <div className="text-base font-semibold capitalize">{provider}</div>
+                      <p className="mt-1 text-xs text-[#78716C]">{provider === "gemini" ? "Google's AI model" : "GPT powered"}</p>
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <h3 className="mb-4 text-base font-semibold">Sentiment Model</h3>
+                <div className="flex flex-wrap gap-2">
+                  {["conservative", "balanced", "aggressive"].map((mode) => (
+                    <Button key={mode} variant={state.ai.sentimentModel === mode ? "default" : "outline"} className={state.ai.sentimentModel === mode ? "bg-[#0D9488] text-white" : ""} onClick={() => updateState((current) => ({ ...current, ai: { ...current.ai, sentimentModel: mode } }))}>
+                      {mode[0].toUpperCase() + mode.slice(1)}
+                    </Button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <Label htmlFor="language" className="mb-3 block text-sm">Response Language</Label>
+                <Select value={state.ai.analysisLanguage} onValueChange={(value) => updateState((current) => ({ ...current, ai: { ...current.ai, analysisLanguage: value } }))}>
+                  <SelectTrigger className="rounded-lg border-[#E7E5E4]"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="en">English</SelectItem>
                     <SelectItem value="es">Spanish</SelectItem>
                     <SelectItem value="fr">French</SelectItem>
-                    <SelectItem value="de">German</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
-
-              <Separator />
-
-              <div className="flex items-center justify-between">
-                <div className="space-y-0.5">
-                  <p className="text-sm font-medium text-foreground">Auto-draft review replies</p>
-                  <p className="text-sm text-muted-foreground">
-                    AI will prepare reply suggestions that you can review and post.
-                  </p>
+              <div className="flex items-center justify-between py-3">
+                <div>
+                  <p className="text-sm font-medium">Auto-draft responses</p>
+                  <p className="text-xs text-[#78716C]">Automatically generate reply suggestions</p>
                 </div>
-                <Switch
-                  checked={state.ai.autoRespond}
-                  onCheckedChange={(checked) =>
-                    updateState((current) => ({
-                      ...current,
-                      ai: { ...current.ai, autoRespond: checked },
-                    }))
-                  }
-                />
+                <Switch checked={state.ai.autoRespond} onCheckedChange={(checked) => updateState((current) => ({ ...current, ai: { ...current.ai, autoRespond: checked } }))} />
               </div>
-            </CardContent>
+            </div>
           </Card>
-
           <div className="flex justify-end">
-            <Button
-              onClick={() => {
-                setMessage(null);
-                void saveMutation.mutateAsync();
-              }}
-              disabled={saveMutation.isPending}
-            >
-              {saveMutation.isPending ? "Saving..." : "Save All Settings"}
-            </Button>
+            <Button className="bg-[#0D9488] text-white hover:bg-[#134E4A]" onClick={() => void saveMutation.mutateAsync()} disabled={saveMutation.isPending}>Save Changes</Button>
           </div>
-        </>
+        </div>
+      )}
+
+      {activeTab === "billing" && (
+        <div className="space-y-6">
+          <Card className="rounded-xl bg-gradient-to-br from-[#0D9488] to-[#134E4A] p-6 text-white">
+            <h3 className="text-2xl" style={{ fontFamily: "Playfair Display", fontWeight: 600 }}>Billing</h3>
+            <p className="text-lg opacity-90">Plans powered by Clerk Billing</p>
+            <p className="mt-2 text-sm opacity-90">Free trials and checkout are configured in Clerk Dashboard.</p>
+            <Button className="mt-4 bg-white text-[#0D9488] hover:bg-[#F0FDF9]" asChild>
+              <Link href="/billing">Open Billing</Link>
+            </Button>
+          </Card>
+          <BillingPlanCards plans={billingPlans} ctaHref="/billing" showFree={false} compact />
+        </div>
       )}
     </div>
   );
 }
+
+
+

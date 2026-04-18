@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -13,6 +13,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { ListPageSkeleton } from "@/components/dashboard-skeletons";
 import { Badge } from "@/components/ui/badge";
 import { Star, Search, Filter, RefreshCw } from "lucide-react";
 import { Input } from "@/components/ui/input";
@@ -234,9 +235,7 @@ export default function ReviewsPage() {
 
     autoSyncedBusinessRef.current = effectiveBusinessId;
     void refreshSelectedBusiness();
-  }, [effectiveBusinessId, refreshSelectedBusiness, selectedBusiness]);
-
-  const reviews = useMemo(() => {
+  }, [effectiveBusinessId, refreshSelectedBusiness, selectedBusiness]);  const reviews = useMemo(() => {
     const all = data?.reviews ?? [];
     return all.filter((review) => {
       if (
@@ -254,6 +253,10 @@ export default function ReviewsPage() {
       return true;
     });
   }, [data, query, sentiment, source]);
+
+  if (isPending && !data) {
+    return <ListPageSkeleton />;
+  }
 
   return (
     <div className="space-y-6">
@@ -498,3 +501,9 @@ export default function ReviewsPage() {
     </div>
   );
 }
+
+
+
+
+
+

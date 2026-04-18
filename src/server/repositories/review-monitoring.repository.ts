@@ -335,8 +335,84 @@ export class ReviewMonitoringRepository {
   }
 
   async createReview(input: Prisma.ReviewCreateInput) {
-    return prisma.review.create({
-      data: input,
+    try {
+      return await prisma.review.create({
+        data: input,
+      });
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === "P2002" &&
+        input.externalRef &&
+        input.source &&
+        "connect" in input.business &&
+        input.business.connect?.id
+      ) {
+        const existing = await prisma.review.findUnique({
+          where: {
+            businessId_source_externalRef: {
+              businessId: input.business.connect.id,
+              source: input.source,
+              externalRef: input.externalRef,
+            },
+          },
+        });
+
+        if (existing) {
+          return existing;
+        }
+      }
+
+      throw error;
+    }
+  }
+
+  async upsertReview(input: {
+    businessId: string;
+    managedBusinessId?: string | null;
+    author: string;
+    text: string;
+    rating: number;
+    sentiment: Prisma.ReviewCreateInput["sentiment"];
+    source: ReviewSource;
+    externalRef: string;
+    reviewResourceName?: string | null;
+    reviewReply?: string | null;
+    reviewRepliedAt?: Date | null;
+    createdAt: Date;
+  }) {
+    return prisma.review.upsert({
+      where: {
+        businessId_source_externalRef: {
+          businessId: input.businessId,
+          source: input.source,
+          externalRef: input.externalRef,
+        },
+      },
+      update: {
+        managedBusinessId: input.managedBusinessId,
+        author: input.author,
+        text: input.text,
+        rating: input.rating,
+        sentiment: input.sentiment,
+        reviewResourceName: input.reviewResourceName,
+        reviewReply: input.reviewReply,
+        reviewRepliedAt: input.reviewRepliedAt,
+      },
+      create: {
+        businessId: input.businessId,
+        managedBusinessId: input.managedBusinessId,
+        author: input.author,
+        text: input.text,
+        rating: input.rating,
+        sentiment: input.sentiment,
+        source: input.source,
+        externalRef: input.externalRef,
+        reviewResourceName: input.reviewResourceName,
+        reviewReply: input.reviewReply,
+        reviewRepliedAt: input.reviewRepliedAt,
+        createdAt: input.createdAt,
+      },
     });
   }
 

@@ -1,37 +1,16 @@
-"use client";
+﻿"use client";
 
 import { useState } from "react";
-import {
-  useMutation,
-  useQuery,
-  useQueryClient,
-} from "@tanstack/react-query";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { AlertTriangle, Award, ChevronDown, RefreshCw, Shield, TrendingDown } from "lucide-react";
+import { ListPageSkeleton } from "@/components/dashboard-skeletons";
 import { Badge } from "@/components/ui/badge";
-import {
-  AlertTriangle,
-  Bell,
-  CheckCircle,
-  RefreshCw,
-  XCircle,
-} from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { fetchJson } from "@/lib/api";
 import { queryKeys } from "@/lib/query-keys";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 
 type AlertsResponse = {
   unreadCount: number;
@@ -51,48 +30,40 @@ type AlertsResponse = {
     description: string;
     enabled: boolean;
   }>;
-  selectedBusinessId: string | null;
 };
 
 type SettingsResponse = {
-  businesses: Array<{
-    id: string;
-    name: string;
-    placeId: string;
-  }>;
+  businesses: Array<{ id: string; name: string; placeId: string }>;
 };
 
-function SeverityBadge({ severity }: { severity: string }) {
-  if (severity === "high") return <Badge variant="destructive">High</Badge>;
-  if (severity === "medium")
-    return <Badge className="bg-warning text-warning-foreground">Medium</Badge>;
-  return <Badge variant="secondary">Low</Badge>;
+function iconFor(type: string) {
+  if (type === "rating_drop") return TrendingDown;
+  if (type === "positive_spike") return Award;
+  return AlertTriangle;
 }
 
-function AlertIcon({ type }: { type: string }) {
-  if (type === "negative_review")
-    return <XCircle className="h-5 w-5 text-destructive" />;
-  if (type === "rating_drop")
-    return <AlertTriangle className="h-5 w-5 text-warning" />;
-  if (type === "positive_spike")
-    return <CheckCircle className="h-5 w-5 text-success" />;
-  return <Bell className="h-5 w-5 text-muted-foreground" />;
+function colorFor(severity: string) {
+  if (severity === "high") return "#EF4444";
+  if (severity === "medium") return "#D97706";
+  return "#0D9488";
 }
 
 export default function AlertsPage() {
   const [savingRule, setSavingRule] = useState<string | null>(null);
   const [selectedBusinessId, setSelectedBusinessId] = useState<string | null>(null);
   const queryClient = useQueryClient();
+
   const settingsQuery = useQuery({
     queryKey: queryKeys.settings,
     queryFn: () => fetchJson<SettingsResponse>("/api/settings", { cache: "no-store" }),
   });
-  const effectiveBusinessId =
-    selectedBusinessId ?? settingsQuery.data?.businesses[0]?.id ?? null;
+
+  const effectiveBusinessId = selectedBusinessId ?? settingsQuery.data?.businesses[0]?.id ?? null;
   const selectedBusiness =
     settingsQuery.data?.businesses.find((business) => business.id === effectiveBusinessId) ??
     settingsQuery.data?.businesses[0];
-  const { data, isPending, error } = useQuery({
+
+  const alertsQuery = useQuery({
     queryKey: queryKeys.alerts(effectiveBusinessId),
     queryFn: () =>
       fetchJson<AlertsResponse>(
@@ -110,17 +81,16 @@ export default function AlertsPage() {
 
   const syncReviewsMutation = useMutation({
     mutationFn: async () => {
-      if (selectedBusiness?.placeId?.trim() || selectedBusiness?.name?.trim()) {
-        await fetchJson<{ storedCount: number }>("/api/fetch-reviews", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            managedBusinessId: effectiveBusinessId,
-            placeId: selectedBusiness?.placeId?.trim(),
-            businessName: selectedBusiness?.name?.trim(),
-          }),
-        });
-      }
+      if (!selectedBusiness) return;
+      await fetchJson<{ storedCount: number }>("/api/fetch-reviews", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          managedBusinessId: effectiveBusinessId,
+          placeId: selectedBusiness.placeId,
+          businessName: selectedBusiness.name,
+        }),
+      });
     },
     onSuccess: refreshAlerts,
   });
@@ -135,10 +105,7 @@ export default function AlertsPage() {
     onSuccess: refreshAlerts,
   });
 
-  const handleRuleToggle = async (
-    type: AlertsResponse["rules"][number]["type"],
-    enabled: boolean,
-  ) => {
+  const handleRuleToggle = async (type: AlertsResponse["rules"][number]["type"], enabled: boolean) => {
     setSavingRule(type);
     try {
       await fetchJson<{ ok: true }>("/api/alerts", {
@@ -152,140 +119,118 @@ export default function AlertsPage() {
     }
   };
 
+  const data = alertsQuery.data;
+  const hasAlerts = Boolean(data?.alerts.length);
+
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+      <div className="flex items-start justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight text-foreground">
+          <h1 className="text-[28px] text-[#1C1917]" style={{ fontFamily: "Playfair Display", fontWeight: 600 }}>
             Alerts
           </h1>
-          <p className="text-muted-foreground">Monitor and manage review alerts.</p>
         </div>
-        <div className="flex flex-col gap-3 sm:flex-row">
-          <Select
-            value={effectiveBusinessId ?? "none"}
-            onValueChange={(value) => setSelectedBusinessId(value === "none" ? null : value)}
-          >
-            <SelectTrigger className="w-[240px]">
+        <div className="flex items-center gap-3">
+          <Select value={effectiveBusinessId ?? "none"} onValueChange={(value) => setSelectedBusinessId(value === "none" ? null : value)}>
+            <SelectTrigger className="h-10 w-56 rounded-full border-[#0D9488] text-[#0D9488]">
               <SelectValue placeholder="Select business" />
+              <ChevronDown className="ml-2 h-4 w-4" />
             </SelectTrigger>
             <SelectContent>
               {settingsQuery.data?.businesses.length ? (
                 settingsQuery.data.businesses.map((business) => (
-                  <SelectItem key={business.id} value={business.id}>
-                    {business.name}
-                  </SelectItem>
+                  <SelectItem key={business.id} value={business.id}>{business.name}</SelectItem>
                 ))
               ) : (
                 <SelectItem value="none">No businesses added</SelectItem>
               )}
             </SelectContent>
           </Select>
-          <Button
-            variant="outline"
-            className="gap-2"
-            onClick={() => void syncReviewsMutation.mutateAsync()}
-            disabled={syncReviewsMutation.isPending || !selectedBusiness}
-          >
+          <Button variant="outline" size="icon" disabled={syncReviewsMutation.isPending || !selectedBusiness} onClick={() => void syncReviewsMutation.mutateAsync()}>
             <RefreshCw className="h-4 w-4" />
-            {syncReviewsMutation.isPending ? "Refreshing..." : "Refresh"}
           </Button>
-          <Button
-            variant="outline"
-            className="gap-2"
-            disabled={markAllReadMutation.isPending}
-            onClick={() => void markAllReadMutation.mutateAsync()}
-          >
-            <CheckCircle className="h-4 w-4" />
-            Mark all read
-          </Button>
+          {hasAlerts && (
+            <Button variant="outline" disabled={markAllReadMutation.isPending} onClick={() => void markAllReadMutation.mutateAsync()}>
+              Mark all read
+            </Button>
+          )}
         </div>
       </div>
 
-      {!settingsQuery.data?.businesses.length && (
-        <div className="rounded-lg border border-warning/40 bg-warning/10 px-4 py-3 text-sm text-foreground">
-          Add at least one business in Settings to view business-specific alerts.
+      {alertsQuery.isPending && !data && <ListPageSkeleton />}
+      {alertsQuery.error && (
+        <div className="rounded-lg border border-[#EF4444]/40 bg-[#FEE2E2] p-4 text-sm text-[#EF4444]">
+          {alertsQuery.error instanceof Error ? alertsQuery.error.message : "Failed to load alerts"}
         </div>
       )}
 
-      {isPending && <div className="text-sm text-muted-foreground">Loading alerts...</div>}
-      {error && (
-        <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-4 text-sm text-destructive">
-          {error instanceof Error ? error.message : "Failed to load alerts"}
-        </div>
-      )}
-
-      {!isPending && !error && data && (
+      {!alertsQuery.isPending && !alertsQuery.error && data && (
         <>
-          <Card>
-            <CardHeader>
-              <CardTitle>Recent Alerts</CardTitle>
-              <CardDescription>{data.unreadCount} unread alerts</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-4">
-                {data.alerts.map((alert) => (
-                  <div
-                    key={alert.id}
-                    className={`flex items-start gap-4 border-b border-border pb-4 last:border-0 last:pb-0 ${
-                      !alert.read ? "bg-accent/30 -mx-4 px-4 py-3 rounded-lg" : ""
-                    }`}
-                  >
-                    <AlertIcon type={alert.type} />
-                    <div className="flex-1 space-y-1">
-                      <div className="flex items-center gap-2">
-                        <span className="font-medium text-sm text-foreground">{alert.title}</span>
-                        <SeverityBadge severity={alert.severity} />
-                        {!alert.read && (
-                          <Badge variant="outline" className="text-xs">
-                            New
+          {!hasAlerts ? (
+            <div className="flex min-h-[500px] items-center justify-center">
+              <div className="max-w-md space-y-4 text-center">
+                <div className="flex justify-center">
+                  <div className="flex h-20 w-20 items-center justify-center rounded-full bg-[#F0FDF9]">
+                    <Shield className="h-10 w-10 text-[#0D9488]" />
+                  </div>
+                </div>
+                <h2 className="text-xl text-[#1C1917]" style={{ fontFamily: "Playfair Display", fontWeight: 600 }}>
+                  You&apos;re all clear
+                </h2>
+                <p className="text-sm text-[#78716C]">No new alerts. We&apos;ll notify you the moment something needs attention.</p>
+                <Button variant="link" className="text-[#0D9488]">Configure alert settings</Button>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {data.alerts.map((alert) => {
+                const Icon = iconFor(alert.type);
+                const color = colorFor(alert.severity);
+                return (
+                  <Card key={alert.id} className={`cursor-pointer rounded-xl border-[#E7E5E4] p-5 shadow-sm transition-colors hover:bg-[#FAFAF9] ${!alert.read ? "bg-[#FEF3C7]/20" : "bg-white"}`}>
+                    <div className="flex gap-4">
+                      <div className="w-1 shrink-0 rounded-full" style={{ backgroundColor: color }} />
+                      <div className="flex flex-1 gap-4">
+                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg" style={{ backgroundColor: `${color}15` }}>
+                          <Icon className="h-5 w-5" style={{ color }} />
+                        </div>
+                        <div className="flex-1 space-y-1">
+                          <div className="flex items-start justify-between gap-4">
+                            <h3 className="text-sm font-semibold text-[#1C1917]">{alert.title}</h3>
+                            <span className="text-xs text-[#78716C]">{new Date(alert.createdAt).toLocaleString()}</span>
+                          </div>
+                          <p className="text-sm text-[#78716C]">{alert.description}</p>
+                          <Badge variant="secondary" className="mt-2 border-0 bg-[#F8F6F1] text-xs text-[#78716C]">
+                            {selectedBusiness?.name ?? "Business"}
                           </Badge>
-                        )}
+                        </div>
                       </div>
-                      <p className="text-sm text-muted-foreground">{alert.description}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {new Date(alert.createdAt).toLocaleString()}
-                      </p>
                     </div>
-                  </div>
-                ))}
-                {data.alerts.length === 0 && (
-                  <p className="text-sm text-muted-foreground">No alerts available.</p>
-                )}
-              </div>
-            </CardContent>
-          </Card>
+                  </Card>
+                );
+              })}
+            </div>
+          )}
 
-          <Card>
-            <CardHeader>
-              <CardTitle>Alert Rules</CardTitle>
-              <CardDescription>
-                Configure which alerts you want to receive.
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-4">
-                {data.rules.map((rule) => (
-                  <div
-                    key={rule.id}
-                    className="flex items-center justify-between border-b border-border pb-4 last:border-0 last:pb-0"
-                  >
-                    <div className="space-y-0.5">
-                      <p className="text-sm font-medium text-foreground">{rule.name}</p>
-                      <p className="text-sm text-muted-foreground">{rule.description}</p>
-                    </div>
-                    <Switch
-                      checked={rule.enabled}
-                      disabled={savingRule === rule.type}
-                      onCheckedChange={(checked) => void handleRuleToggle(rule.type, checked)}
-                    />
+          <Card className="rounded-xl border-[#E7E5E4] bg-white p-6 shadow-sm">
+            <h3 className="mb-4 text-base font-semibold text-[#1C1917]">Alert Rules</h3>
+            <div className="space-y-4">
+              {data.rules.map((rule) => (
+                <div key={rule.id} className="flex items-center justify-between border-b border-[#E7E5E4] pb-4 last:border-0 last:pb-0">
+                  <div>
+                    <p className="text-sm font-medium text-[#1C1917]">{rule.name}</p>
+                    <p className="text-xs text-[#78716C]">{rule.description}</p>
                   </div>
-                ))}
-              </div>
-            </CardContent>
+                  <Switch checked={rule.enabled} disabled={savingRule === rule.type} onCheckedChange={(checked) => void handleRuleToggle(rule.type, checked)} />
+                </div>
+              ))}
+            </div>
           </Card>
         </>
       )}
     </div>
   );
 }
+
+
+
