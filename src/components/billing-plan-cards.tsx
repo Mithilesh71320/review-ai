@@ -10,20 +10,16 @@ type BillingPlanCardsProps = {
   plans: BillingPlan[];
   ctaHref?: string;
   compact?: boolean;
-  showFree?: boolean;
 };
 
 export function BillingPlanCards({
   plans,
   ctaHref = "/billing",
   compact = false,
-  showFree = true,
 }: BillingPlanCardsProps) {
-  const visiblePlans = showFree ? plans : plans.filter((plan) => plan.key !== "free");
-
   return (
-    <div className={cn("grid gap-4", compact ? "md:grid-cols-3" : "md:grid-cols-4")}>
-      {visiblePlans.map((plan) => (
+    <div className={cn("grid gap-4", compact ? "md:grid-cols-3" : "lg:grid-cols-3")}>
+      {plans.map((plan) => (
         <Card
           key={plan.key}
           className={cn(
@@ -63,7 +59,7 @@ export function BillingPlanCards({
             )}
             asChild
           >
-            <Link href={ctaHref}>{plan.key === "free" ? "Keep free" : plan.cta}</Link>
+            <Link href={ctaHref}>{plan.cta}</Link>
           </Button>
         </Card>
       ))}

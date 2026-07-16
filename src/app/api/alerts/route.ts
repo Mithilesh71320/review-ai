@@ -2,8 +2,9 @@ import { NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import { type AlertType } from "@/generated/prisma/client";
 import { reviewMonitoringService } from "@/server/services/review-monitoring.service";
+import { withApiLogger } from "@/lib/api-logger";
 
-export async function GET(req: Request) {
+export const GET = withApiLogger(async (req: Request) => {
   const { userId } = await auth();
 
   if (!userId) {
@@ -15,9 +16,9 @@ export async function GET(req: Request) {
 
   const data = await reviewMonitoringService.getAlerts(userId, managedBusinessId);
   return NextResponse.json(data);
-}
+});
 
-export async function PATCH(req: Request) {
+export const PATCH = withApiLogger(async (req: Request) => {
   const { userId } = await auth();
 
   if (!userId) {
@@ -39,4 +40,4 @@ export async function PATCH(req: Request) {
   }
 
   return NextResponse.json({ error: "Invalid action" }, { status: 400 });
-}
+});

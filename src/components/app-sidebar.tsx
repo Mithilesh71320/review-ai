@@ -2,9 +2,13 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useQuery } from "@tanstack/react-query";
 import { Bell, CreditCard, LayoutGrid, Scissors, Settings, Star } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { fetchJson } from "@/lib/api";
+import { getInitials, buildReturnTo } from "@/lib/display";
+import { queryKeys } from "@/lib/query-keys";
 import { cn } from "@/lib/utils";
 
 const navItems = [
@@ -15,8 +19,26 @@ const navItems = [
   { path: "/settings", icon: Settings, label: "Settings" },
 ];
 
+type SettingsResponse = {
+  business: {
+    name: string;
+    email: string;
+  };
+  subscription: {
+    planName: string | null;
+    hasPaidPlan: boolean;
+  };
+};
+
 export function AppSidebar() {
   const pathname = usePathname();
+  const { data } = useQuery({
+    queryKey: queryKeys.settings,
+    queryFn: () => fetchJson<SettingsResponse>("/api/settings", { cache: "no-store" }),
+  });
+  const displayName = data?.business.name?.trim() || "Your Account";
+  const planName = data?.subscription.planName ?? "No Plan";
+  const billingHref = buildReturnTo(pathname);
 
   return (
     <aside className="hidden w-60 shrink-0 flex-col border-r border-[#E7E5E4] bg-[#F8F6F1] md:flex">
@@ -38,11 +60,15 @@ export function AppSidebar() {
         {navItems.map((item) => {
           const Icon = item.icon;
           const active = pathname === item.path;
+          const href =
+            item.path === "/billing" && pathname !== "/billing"
+              ? billingHref
+              : item.path;
 
           return (
             <Link
               key={item.path}
-              href={item.path}
+              href={href}
               className={cn(
                 "flex h-10 items-center gap-3 rounded-lg px-3 text-sm transition-colors",
                 active
@@ -61,17 +87,17 @@ export function AppSidebar() {
       <div className="space-y-3 border-t border-[#E7E5E4] p-4">
         <div className="flex items-center gap-3">
           <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#0D9488] text-sm text-white">
-            JD
+            {getInitials(displayName)}
           </div>
           <div className="min-w-0 flex-1">
             <div className="truncate text-sm" style={{ fontFamily: "Inter" }}>
-              John Doe
+              {displayName}
             </div>
             <Badge
               variant="secondary"
               className="border-0 bg-[#FEF3C7] text-xs text-[#D97706]"
             >
-              Free Plan
+              {planName}
             </Badge>
           </div>
         </div>
@@ -81,7 +107,7 @@ export function AppSidebar() {
           className="w-full border-[#0D9488] text-[#0D9488] hover:bg-[#F0FDF9]"
           asChild
         >
-          <Link href="/billing">Upgrade</Link>
+          <Link href={billingHref}>Upgrade</Link>
         </Button>
       </div>
     </aside>

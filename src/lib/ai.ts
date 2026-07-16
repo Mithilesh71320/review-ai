@@ -1,15 +1,24 @@
+import {
+  ReviewInsightsSchema,
+  ReviewReplySchema,
+  ReviewSentimentSchema,
+} from "@/lib/ai-schemas";
+
 type InsightInput = {
   businessName: string;
+  businessContext?: string;
   reviews: Array<{
     author: string;
     rating: number;
     text: string;
+    tags?: string[];
     createdAt: string;
   }>;
 };
 
 type ReplyInput = {
   businessName: string;
+  businessContext?: string;
   review: {
     author: string;
     rating: number;
@@ -19,19 +28,26 @@ type ReplyInput = {
 };
 
 export type ReviewInsights = {
-  summary: string;
-  strengths: string[];
-  issues: string[];
-  opportunities: string[];
-  actionPlan: string[];
-  customerTone: "positive" | "mixed" | "negative";
-  responseStyle: string;
+  improvedOrChanged: string[];
+  remainSame: string[];
+  recommendedActions: Array<{
+    action: string;
+    evidence: string;
+    impact: "high" | "medium" | "low";
+    effort: "high" | "medium" | "low";
+  }>;
 };
 
 export type ReviewReplyDraft = {
   reply: string;
   tone: string;
   confidence: "high" | "medium" | "low";
+};
+
+export type ReviewSentimentClassification = {
+  sentiment: "POSITIVE" | "NEUTRAL" | "NEGATIVE";
+  reason: string;
+  confidence?: number;
 };
 
 const stopWords = new Set([
@@ -131,74 +147,125 @@ function topTerms(texts: string[], limit = 4) {
 
 function fallbackInsights(input: InsightInput): ReviewInsights {
   const ratings = input.reviews.map((review) => review.rating);
-  const averageRating = summarizeRatings(ratings);
+  summarizeRatings(ratings);
   const negativeReviews = input.reviews.filter((review) => review.rating <= 2);
   const neutralReviews = input.reviews.filter((review) => review.rating === 3);
   const positiveReviews = input.reviews.filter((review) => review.rating >= 4);
   const positiveTerms = topTerms(positiveReviews.map((review) => review.text));
   const negativeTerms = topTerms(negativeReviews.map((review) => review.text));
-  const allTerms = topTerms(input.reviews.map((review) => review.text));
+  const totalReviews = input.reviews.length;
 
-  const strengths = [
-    positiveReviews[0]
-      ? `Customers specifically praised: "${snippet(positiveReviews[0].text)}"`
-      : `Higher-rated feedback for ${input.businessName} is limited, so recent wins are not clearly reinforced.`,
-    positiveTerms[0]
-      ? `Positive mentions repeatedly reference ${positiveTerms.slice(0, 2).join(" and ")}.`
-      : `Positive reviews do not yet show one dominant strength customers consistently mention.`,
-    `Average rating across the analyzed reviews is ${averageRating.toFixed(1)}/5.`,
-  ];
+  const hasAnyTerm = (terms: string[], candidates: string[]) =>
+    terms.some((term) => candidates.some((candidate) => term.includes(candidate)));
 
-  const issues = [
-    negativeReviews[0]
-      ? `A recent low-rated review said: "${snippet(negativeReviews[0].text)}"`
-      : "There are no strong negative reviews in the current sample, but weak spots can still be hidden inside neutral feedback.",
+  const packingTheme = hasAnyTerm(negativeTerms, [
+    "pack",
+    "order",
+    "missing",
+    "dispatch",
+    "delivery",
+  ]);
+  const hygieneTheme = hasAnyTerm(negativeTerms, [
+    "hygiene",
+    "clean",
+    "dirty",
+    "sanit",
+    "smell",
+  ]);
+  const delayTheme = hasAnyTerm(negativeTerms, [
+    "wait",
+    "slow",
+    "delay",
+    "late",
+    "queue",
+    "response",
+    "call",
+  ]);
+
+  const remainSame = positiveTerms.length < 2
+    ? [
+        positiveTerms[0]
+          ? `${positiveTerms[0]} appears as the clearest positive signal; preserve it with documented SOP and weekly quality checks.`
+          : "Positive signals are limited in this review set — focus on resolving complaints before reinforcing strengths.",
+      ]
+    : [
+        `${positiveTerms.slice(0, 2).join(" and ")} are recurring strengths in positive feedback and should be preserved through documented service standards.`,
+        `Maintain the current execution quality around ${positiveTerms.slice(0, 2).join(" and ")} with periodic quality audits to avoid drift.`,
+      ];
+
+  const improvedOrChanged = [
+    packingTheme
+      ? "Order accuracy and packing workflow has recurring control gaps that are creating repeat customer dissatisfaction."
+      : hygieneTheme
+        ? "Hygiene and cleanliness standards appear inconsistent and require stricter operational enforcement."
+        : delayTheme
+          ? "Service/response-time control is inconsistent and needs a stronger SLA with escalation ownership."
+          : negativeTerms[0]
+            ? `Operational reliability issues are recurring around ${negativeTerms.slice(0, 2).join(" and ")} and require process redesign.`
+            : "No single dominant complaint theme is confirmed yet, but early signals show service consistency gaps that need preventive controls.",
     negativeTerms[0]
-      ? `Repeated complaint themes point to ${negativeTerms.slice(0, 3).join(", ")}.`
+      ? `Complaint patterns indicate repeat failures in ${negativeTerms.slice(0, 3).join(", ")}, suggesting systemic process issues rather than one-off incidents.`
       : neutralReviews[0]
-        ? `Neutral feedback suggests inconsistency: "${snippet(neutralReviews[0].text)}"`
-        : "The review set is small, so complaint patterns are still emerging.",
-    `${negativeReviews.length} low-rated review(s) and ${neutralReviews.length} neutral review(s) need active follow-up.`,
+        ? "Neutral feedback indicates inconsistent execution across shifts, pointing to weak SOP adherence."
+        : "Low complaint volume still warrants proactive monitoring to prevent repeat issues from scaling.",
+    negativeTerms[0]
+      ? `Recurring issues around ${negativeTerms.slice(0, 2).join(" and ")} suggest a process-level failure that needs internal review and corrective SOP.`
+      : "Complaint patterns are not yet clear enough to identify a dominant failure — monitor next 10 reviews for emerging themes.",
   ];
 
-  const opportunities = [
-    allTerms[0]
-      ? `The strongest recurring topics in this business's reviews are ${allTerms.slice(0, 4).join(", ")}. These should guide service improvements and replies.`
-      : "Collect more detailed reviews so recurring operational themes become clearer.",
-    positiveReviews.length > 0
-      ? "Use the same words customers use in positive reviews when training staff and improving offers."
-      : "Encourage more happy customers to leave detailed reviews so the business has clearer positive proof points.",
-    negativeReviews.length > 0
-      ? "Turn repeated complaints into one visible operational fix and mention that fix in future owner replies."
-      : "Maintain response speed and consistency before minor issues turn into low-rated reviews.",
-  ];
+  const recommendedActions: ReviewInsights["recommendedActions"] = [];
+  const distinctThemes = new Set<string>();
 
-  const actionPlan = [
-    negativeReviews[0]
-      ? `Resolve the issue described in "${snippet(negativeReviews[0].text, 72)}" and confirm whether it reflects a repeat problem.`
-      : "Review recent neutral feedback and identify one service improvement before ratings slip.",
-    positiveTerms[0]
-      ? `Protect the strengths customers mention most often: ${positiveTerms.slice(0, 2).join(" and ")}.`
-      : "Identify one part of the experience that consistently earns praise and make it repeatable.",
-    "Reply to new reviews quickly, especially low-rated ones, with a response that acknowledges the exact issue raised.",
-  ];
+  if (packingTheme) {
+    distinctThemes.add("packing");
+  }
+  if (hygieneTheme) {
+    distinctThemes.add("hygiene");
+  }
+  if (delayTheme) {
+    distinctThemes.add("delay");
+  }
+  if (!packingTheme && !hygieneTheme && !delayTheme && negativeTerms.length > 0) {
+    distinctThemes.add("general");
+  }
+
+  if (distinctThemes.has("packing")) {
+    recommendedActions.push({
+      action: "Implement a double-check dispatch checklist before every order handoff | Owner: Shift supervisor | Cadence: Every order | KPI: Order accuracy rate above 98%",
+      evidence: `Recurring packing/order issues found in ${negativeReviews.length} negative review(s).`,
+      impact: "high",
+      effort: "low",
+    });
+  }
+  if (distinctThemes.has("hygiene")) {
+    recommendedActions.push({
+      action: "Introduce shift-based hygiene checklist with supervisor sign-off | Owner: Floor manager | Cadence: Every shift | KPI: Zero hygiene complaints per month",
+      evidence: `Hygiene/cleanliness complaints detected in negative feedback.`,
+      impact: "high",
+      effort: "medium",
+    });
+  }
+  if (distinctThemes.has("delay")) {
+    recommendedActions.push({
+      action: "Set a maximum response/service time SLA and assign an escalation owner for breaches | Owner: Operations lead | Cadence: Daily monitoring | KPI: Average service time under target threshold",
+      evidence: `Delay/wait-time complaints found in negative reviews.`,
+      impact: "high",
+      effort: "medium",
+    });
+  }
+  if (distinctThemes.has("general")) {
+    recommendedActions.push({
+      action: `Run a root-cause review for recurring issues around ${negativeTerms.slice(0, 2).join(" and ")} and publish corrective SOP updates | Owner: Operations lead | Cadence: Weekly review cycle | KPI: 30% drop in repeat complaints within 30 days`,
+      evidence: `Terms "${negativeTerms.slice(0, 2).join('", "')}" appear repeatedly in ${negativeReviews.length} negative review(s).`,
+      impact: "medium",
+      effort: "medium",
+    });
+  }
 
   return {
-    summary: `${input.businessName} currently has ${input.reviews.length} analyzed review(s) with an average rating of ${averageRating.toFixed(1)}/5. The strongest signals come from ${
-      positiveTerms.length > 0 ? positiveTerms.slice(0, 2).join(" and ") : "a small set of positive comments"
-    }, while the main risk areas center on ${
-      negativeTerms.length > 0 ? negativeTerms.slice(0, 2).join(" and ") : "service inconsistency"
-    }. The next improvements should focus on the exact problems mentioned in recent low-rated or neutral reviews, not generic reputation work.`,
-    strengths,
-    issues,
-    opportunities,
-    actionPlan,
-    customerTone:
-      averageRating >= 4 ? "positive" : averageRating >= 3 ? "mixed" : "negative",
-    responseStyle:
-      averageRating >= 4
-        ? "Warm, grateful, and specific to what customers praised."
-        : "Calm, accountable, and tailored to the exact complaint raised.",
+    improvedOrChanged,
+    remainSame,
+    recommendedActions,
   };
 }
 
@@ -331,6 +398,109 @@ async function runModel(prompt: string) {
   return callGemini(prompt);
 }
 
+function fallbackReviewSentiment(text: string): ReviewSentimentClassification {
+  const normalized = text.toLowerCase();
+  const negativeSignals = [
+    "never again",
+    "worst",
+    "terrible",
+    "awful",
+    "unacceptable",
+    "frustrated",
+    "angry",
+    "not acceptable",
+    "disappointing",
+    "missing",
+    "wrong order",
+    "poor",
+    "bad experience",
+    "issue",
+    "problem",
+    "complaint",
+  ];
+  const positiveSignals = [
+    "thank",
+    "great",
+    "amazing",
+    "excellent",
+    "love",
+    "awesome",
+    "perfect",
+    "good food",
+    "helpful",
+    "friendly",
+  ];
+
+  const negativeHits = negativeSignals.filter((phrase) => normalized.includes(phrase)).length;
+  const positiveHits = positiveSignals.filter((phrase) => normalized.includes(phrase)).length;
+
+  if (negativeHits > positiveHits) {
+    return {
+      sentiment: "NEGATIVE",
+      reason: "Review text includes repeated complaint language and dissatisfaction signals.",
+    };
+  }
+
+  if (positiveHits > negativeHits) {
+    return {
+      sentiment: "POSITIVE",
+      reason: "Review text is mostly praise without dominant complaint signals.",
+    };
+  }
+
+  return {
+    sentiment: "NEUTRAL",
+    reason: "Review text includes mixed or limited sentiment signals.",
+  };
+}
+
+export async function classifyReviewSentimentFromText(input: {
+  reviewText: string;
+  rating?: number;
+  businessName?: string;
+}): Promise<ReviewSentimentClassification> {
+  const prompt = `
+You are classifying customer review sentiment for business intelligence.
+
+Return strict JSON:
+{
+  "sentiment": "POSITIVE" | "NEUTRAL" | "NEGATIVE",
+  "reason": "string (under 25 words)",
+  "confidence": number between 0 and 1
+}
+
+Rules:
+- Classify by review TEXT meaning first.
+- Do not use star rating as primary signal.
+- Star rating is secondary context only.
+- If review contains concrete dissatisfaction or repeated failure, output NEGATIVE even with 4-5 stars.
+- If review has both praise and complaints, prioritize the dominant customer outcome and explain briefly.
+- Keep reason under 25 words.
+- confidence: 0.9+ if text is clearly one sentiment, 0.5-0.8 if mixed signals.
+
+Business:
+${input.businessName?.trim() || "Unknown business"}
+
+Star rating context:
+${typeof input.rating === "number" ? String(input.rating) : "not provided"}
+
+Review text:
+${input.reviewText}
+`.trim();
+
+  try {
+    const raw = await runModel(prompt);
+    const parsed = extractJson<unknown>(raw);
+    const validated = ReviewSentimentSchema.safeParse(parsed);
+    if (!validated.success) {
+      return fallbackReviewSentiment(input.reviewText);
+    }
+    return validated.data;
+  } catch {
+    return fallbackReviewSentiment(input.reviewText);
+  }
+}
+
 export async function generateReviewInsights(
   input: InsightInput,
 ): Promise<ReviewInsights> {
@@ -340,34 +510,70 @@ You are a senior customer-experience strategist helping a local business improve
 Analyze the reviews below for "${input.businessName}".
 Return strict JSON with this shape:
 {
-  "summary": "string",
-  "strengths": ["string"],
-  "issues": ["string"],
-  "opportunities": ["string"],
-  "actionPlan": ["string"],
-  "customerTone": "positive" | "mixed" | "negative",
-  "responseStyle": "string"
+  "improvedOrChanged": ["string"],
+  "remainSame": ["string"],
+  "recommendedActions": [
+    {
+      "action": "string - specific action with Owner, Cadence, KPI",
+      "evidence": "string - exact review evidence supporting this action",
+      "impact": "high" | "medium" | "low",
+      "effort": "high" | "medium" | "low"
+    }
+  ]
 }
 
 Requirements:
-- Be concrete and commercially useful.
+- Be concrete, commercially useful, and easy to scan.
 - Identify repeat themes, operational issues, staff/service issues, product issues, and reputation risks.
 - Mention what the business should stop, start, and improve.
 - Do not mention that you are an AI.
-- Keep summary under 120 words.
-- Each array should contain 3 to 5 concise bullets.
+- Each array should contain 2 to 5 concise bullets.
 - Use only evidence grounded in the reviews provided.
 - Refer to exact review details, wording, or patterns from this specific business.
 - Avoid generic statements that could apply to any business.
 - If a theme appears only once, say it is a single-instance signal rather than a repeated pattern.
+- Focus on improvement and growth actions, not generic sentiment commentary.
+- Never invent business facts, products, staff names, or operational details.
+- If the evidence is thin, explicitly say there is not enough evidence instead of guessing.
+- Read each review fully; do not infer from star rating alone.
+- Never use star rating as the primary signal for tags or urgency.
+- Use text evidence first; stars are secondary context only.
+- A 5-star review can still contain an operational issue; capture it in tags/issues.
+- Use the review tags provided to identify patterns across reviews.
+- Reviews with tags like "functional" or "performance" indicate specific operational gaps.
+- Reviews tagged "critical_at_risk" need immediate attention in recommendedActions.
+- improvedOrChanged: what should be improved or changed.
+- For improvedOrChanged: do NOT quote or paraphrase review text. Instead extract the underlying operational or service failure.
+- NEVER write a bullet that is just a count of negative/neutral reviews.
+- remainSame: what should remain the same because it is working.
+- For remainSame: do NOT quote review text. Synthesize the pattern across multiple reviews into a business strength statement.
+- Each bullet in remainSame must describe a DISTINCT strength or pattern.
+- If fewer than 2 distinct positive themes are present, reduce remainSame to 1-2 bullets.
+- recommendedActions: prioritized actions the business should take next.
+- Each recommended action MUST include "evidence" field with specific review text or pattern that supports it.
+- Each recommended action MUST include "impact" (high/medium/low) and "effort" (high/medium/low).
+- recommendedActions must be from BUSINESS perspective (operator/owner actions), not customer perspective.
+- Each recommended action should follow: Action | Owner | Cadence | KPI structure in the "action" field.
+- Only generate a recommended action if it is directly grounded in a specific complaint or failure pattern.
+- Do not pad recommendedActions with generic improvement suggestions.
+- Never suggest actions directed at customers.
+- Ensure output is prescriptive analysis, not descriptive commentary.
 
-Reviews:
+Business context:
+${input.businessContext?.trim() ? input.businessContext.trim() : "No additional business context provided."}
+
+Reviews (with tags):
 ${JSON.stringify(input.reviews, null, 2)}
 `.trim();
 
   try {
     const raw = await runModel(prompt);
-    return extractJson<ReviewInsights>(raw);
+    const parsed = extractJson<unknown>(raw);
+    const validated = ReviewInsightsSchema.safeParse(parsed);
+    if (!validated.success) {
+      return fallbackInsights(input);
+    }
+    return validated.data;
   } catch {
     return fallbackInsights(input);
   }
@@ -397,11 +603,19 @@ Requirements:
 
 Review:
 ${JSON.stringify(input.review, null, 2)}
+
+Business context:
+${input.businessContext?.trim() ? input.businessContext.trim() : "No additional business context provided."}
 `.trim();
 
   try {
     const raw = await runModel(prompt);
-    return extractJson<ReviewReplyDraft>(raw);
+    const parsed = extractJson<unknown>(raw);
+    const validated = ReviewReplySchema.safeParse(parsed);
+    if (!validated.success) {
+      throw new Error("Invalid reply format");
+    }
+    return validated.data;
   } catch {
     const positive = input.review.rating >= 4;
 

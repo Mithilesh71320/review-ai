@@ -116,6 +116,12 @@ export class ReviewMonitoringRepository {
     });
   }
 
+  async countReviews(businessId: string) {
+    return prisma.review.count({
+      where: { businessId },
+    });
+  }
+
   async getManagedBusiness(businessId: string, managedBusinessId: string) {
     return prisma.managedBusiness.findFirst({
       where: {
@@ -281,6 +287,7 @@ export class ReviewMonitoringRepository {
         aiProvider: string;
         sentimentModel: string;
         analysisLanguage: string;
+        businessContext: string | null;
       };
       sources: Array<{ source: ReviewSource; connected: boolean }>;
     },
@@ -374,6 +381,9 @@ export class ReviewMonitoringRepository {
     text: string;
     rating: number;
     sentiment: Prisma.ReviewCreateInput["sentiment"];
+    sentimentConfidence?: number | null;
+    sentimentReason?: string | null;
+    reviewTags?: string[] | null;
     source: ReviewSource;
     externalRef: string;
     reviewResourceName?: string | null;
@@ -381,6 +391,17 @@ export class ReviewMonitoringRepository {
     reviewRepliedAt?: Date | null;
     createdAt: Date;
   }) {
+    const extraFields: Record<string, unknown> = {};
+    if (input.sentimentConfidence != null) {
+      extraFields.sentimentConfidence = input.sentimentConfidence;
+    }
+    if (input.sentimentReason != null) {
+      extraFields.sentimentReason = input.sentimentReason;
+    }
+    if (input.reviewTags != null) {
+      extraFields.reviewTags = input.reviewTags;
+    }
+
     return prisma.review.upsert({
       where: {
         businessId_source_externalRef: {
@@ -398,7 +419,8 @@ export class ReviewMonitoringRepository {
         reviewResourceName: input.reviewResourceName,
         reviewReply: input.reviewReply,
         reviewRepliedAt: input.reviewRepliedAt,
-      },
+        ...extraFields,
+      } as Prisma.ReviewUpdateInput,
       create: {
         businessId: input.businessId,
         managedBusinessId: input.managedBusinessId,
@@ -412,7 +434,8 @@ export class ReviewMonitoringRepository {
         reviewReply: input.reviewReply,
         reviewRepliedAt: input.reviewRepliedAt,
         createdAt: input.createdAt,
-      },
+        ...extraFields,
+      } as Prisma.ReviewCreateInput,
     });
   }
 

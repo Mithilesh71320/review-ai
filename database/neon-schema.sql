@@ -121,9 +121,13 @@ CREATE TABLE IF NOT EXISTS "BusinessSettings" (
   "aiProvider" TEXT NOT NULL DEFAULT 'gemini',
   "sentimentModel" TEXT NOT NULL DEFAULT 'balanced',
   "analysisLanguage" TEXT NOT NULL DEFAULT 'en',
+  "businessContext" TEXT,
   "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+ALTER TABLE "BusinessSettings"
+ADD COLUMN IF NOT EXISTS "businessContext" TEXT;
 
 CREATE UNIQUE INDEX IF NOT EXISTS "Review_businessId_source_externalRef_key"
   ON "Review" ("businessId", "source", "externalRef");

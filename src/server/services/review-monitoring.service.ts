@@ -1,99 +1,50 @@
+/**
+ * Review monitoring application service (facade).
+ *
+ * Domain helpers live under `src/server/domain/*`.
+ * Persistence lives in `src/server/repositories/*`.
+ * Route handlers should only call this service (or future focused modules).
+ *
+ * Method groups:
+ * - Dashboard: getDashboard
+ * - Reviews: getReviews, draftReviewReply, postReviewReply, fetchLatestReviewsForBusiness, ingestGoogleReviews
+ * - Alerts: getAlerts, markAllAlertsRead, updateAlertRule
+ * - Settings: getSettings, updateSettings
+ * - Google: connectGoogleTokens, getValidGoogleAccessToken, listGoogleBusinesses, searchGooglePlaces
+ * - Insights: getReviewInsights
+ */
 import crypto from "node:crypto";
+import { AlertType, Sentiment } from "@/generated/prisma/client";
 import {
-  AlertType,
-  ReviewSource,
-  Sentiment,
-  type AlertSeverity,
-} from "@/generated/prisma/client";
-import { generateReviewInsights, generateReviewReply } from "@/lib/ai";
+  assertAdvancedAi,
+  assertAiReplies,
+  assertBusinessLimit,
+  assertPaidPlan,
+  type SubscriptionAccess,
+} from "@/lib/billing-access";
+import {
+  classifyReviewSentimentFromText,
+  generateReviewInsights,
+  generateReviewReply,
+} from "@/lib/ai";
+import { formatStorefrontAddress, prettyEnum } from "@/server/domain/formatting";
+import {
+  GoogleApiError,
+  googleStarRatingToNumber,
+  toUnixSeconds,
+  type GoogleAccountListResponse,
+  type GoogleBusinessLocationsResponse,
+  type GoogleLocationReviewsResponse,
+  type GooglePlaceSearchResponse,
+  type GoogleReview,
+  type GoogleTokenRefreshResponse,
+} from "@/server/domain/google/types";
+import {
+  classifyReview,
+  severityFromRating,
+} from "@/server/domain/review-classification";
+import type { SettingsPayload } from "@/server/domain/settings-payload";
 import { reviewMonitoringRepository } from "@/server/repositories/review-monitoring.repository";
-
-type GoogleReview = {
-  author_name?: string;
-  text?: string;
-  rating?: number;
-  time?: number;
-  review_resource_name?: string;
-  review_reply?: string;
-  review_replied_at?: string;
-};
-
-type GoogleTokenRefreshResponse = {
-  access_token?: string;
-  expires_in?: number;
-  scope?: string;
-  token_type?: string;
-  error?: string;
-  error_description?: string;
-};
-
-type GoogleAccountListResponse = {
-  accounts?: Array<{
-    name: string;
-    accountName?: string;
-    type?: string;
-  }>;
-};
-
-type GoogleBusinessLocationsResponse = {
-  locations?: Array<{
-    name: string;
-    title?: string;
-    storefrontAddress?: {
-      addressLines?: string[];
-      locality?: string;
-      administrativeArea?: string;
-      postalCode?: string;
-    };
-    metadata?: {
-      placeId?: string;
-      mapsUri?: string;
-      newReviewUri?: string;
-    };
-  }>;
-};
-
-type GoogleLocationReviewsResponse = {
-  reviews?: Array<{
-    name?: string;
-    reviewer?: {
-      displayName?: string;
-    };
-    starRating?: "ONE" | "TWO" | "THREE" | "FOUR" | "FIVE";
-    comment?: string;
-    createTime?: string;
-    reviewReply?: {
-      comment?: string;
-      updateTime?: string;
-    };
-  }>;
-  averageRating?: number;
-};
-
-type GooglePlaceSearchResponse = {
-  places?: Array<{
-    id?: string;
-    displayName?: { text?: string };
-    formattedAddress?: string;
-    rating?: number;
-    userRatingCount?: number;
-  }>;
-  error?: {
-    code?: number;
-    message?: string;
-    status?: string;
-  };
-};
-
-class GoogleApiError extends Error {
-  statusCode: number;
-
-  constructor(message: string, statusCode = 500) {
-    super(message);
-    this.name = "GoogleApiError";
-    this.statusCode = statusCode;
-  }
-}
 
 export class ReviewMonitoringService {
   async getDashboard(userId: string, managedBusinessId?: string) {
@@ -207,12 +158,13 @@ export class ReviewMonitoringService {
 
     return {
       reviews: reviews.map((review) => ({
+        ...classifyReview(review.text, review.rating),
         id: review.id,
         author: review.author,
         text: review.text,
         rating: review.rating,
         sentiment: review.sentiment.toLowerCase(),
-        source: this.prettyEnum(review.source),
+        source: prettyEnum(review.source),
         createdAt: review.createdAt.toISOString(),
         canReply: Boolean(review.reviewResourceName),
         reply: review.reviewReply,
@@ -278,8 +230,9 @@ export class ReviewMonitoringService {
     await reviewMonitoringRepository.updateAlertRule(workspace.id, type, enabled);
   }
 
-  async getSettings(userId: string) {
+  async getSettings(userId: string, access: SubscriptionAccess) {
     const workspace = await reviewMonitoringRepository.ensureWorkspace(userId);
+    const storedReviews = await reviewMonitoringRepository.countReviews(workspace.id);
 
     return {
       business: {
@@ -300,9 +253,10 @@ export class ReviewMonitoringService {
         sentimentModel: workspace.settings?.sentimentModel ?? "balanced",
         analysisLanguage: workspace.settings?.analysisLanguage ?? "en",
         autoRespond: workspace.settings?.autoRespond ?? true,
+        businessContext: workspace.settings?.businessContext ?? "",
       },
       sources: workspace.sources.map((source) => ({
-        source: this.prettyEnum(source.source),
+        source: prettyEnum(source.source),
         key: source.source,
         connected: source.connected,
       })),
@@ -314,43 +268,42 @@ export class ReviewMonitoringService {
         locationName: business.locationName,
         mapsUri: business.mapsUri,
       })),
+      subscription: {
+        planKey: access.planKey,
+        planName: access.plan?.name ?? null,
+        hasPaidPlan: access.hasPaidPlan,
+        limits: {
+          maxBusinesses:
+            access.plan?.limits.maxBusinesses ?? null,
+          maxStoredReviews:
+            access.plan?.limits.maxStoredReviews ?? null,
+        },
+        capabilities: access.capabilities,
+        usage: {
+          businesses: workspace.managedBusinesses.length,
+          storedReviews,
+        },
+      },
     };
   }
 
   async updateSettings(
     userId: string,
-    payload: {
-      business: {
-        name: string;
-        email: string;
-        phone: string;
-        website: string;
-        placeId: string;
-      };
-      notifications: {
-        emailNotifications: boolean;
-        pushNotifications: boolean;
-        smsNotifications: boolean;
-        weeklyDigest: boolean;
-      };
-      ai: {
-        provider: string;
-        sentimentModel: string;
-        analysisLanguage: string;
-        autoRespond: boolean;
-      };
-      sources: Array<{ key: ReviewSource; connected: boolean }>;
-      businesses: Array<{
-        id?: string;
-        name: string;
-        placeId: string;
-        accountName?: string | null;
-        locationName?: string | null;
-        mapsUri?: string | null;
-      }>;
-    },
+    access: SubscriptionAccess,
+    payload: SettingsPayload,
   ) {
     const workspace = await reviewMonitoringRepository.ensureWorkspace(userId);
+    const normalizedBusinesses = payload.businesses
+      .map((business) => ({
+        ...business,
+        name: business.name.trim(),
+        placeId: business.placeId.trim(),
+      }))
+      .filter((business) => business.name && business.placeId);
+
+    if (normalizedBusinesses.length > 0) {
+      assertBusinessLimit(access, normalizedBusinesses.length);
+    }
 
     await reviewMonitoringRepository.updateSettings(workspace.id, {
       business: {
@@ -369,6 +322,7 @@ export class ReviewMonitoringService {
         aiProvider: payload.ai.provider,
         sentimentModel: payload.ai.sentimentModel,
         analysisLanguage: payload.ai.analysisLanguage,
+        businessContext: payload.ai.businessContext?.trim() || null,
       },
       sources: payload.sources.map((source) => ({
         source: source.key,
@@ -378,7 +332,7 @@ export class ReviewMonitoringService {
 
     await reviewMonitoringRepository.upsertManagedBusinesses(
       workspace.id,
-      payload.businesses,
+      normalizedBusinesses,
     );
   }
 
@@ -533,7 +487,7 @@ export class ReviewMonitoringService {
           title: location.title ?? "Untitled business",
           placeId: location.metadata?.placeId ?? null,
           mapsUri: location.metadata?.mapsUri ?? null,
-          address: this.formatStorefrontAddress(location.storefrontAddress),
+          address: formatStorefrontAddress(location.storefrontAddress),
         }));
       }),
     );
@@ -614,7 +568,12 @@ export class ReviewMonitoringService {
     return bestMatch;
   }
 
-  async getReviewInsights(userId: string, managedBusinessId?: string) {
+  async getReviewInsights(
+    userId: string,
+    access: SubscriptionAccess,
+    managedBusinessId?: string,
+  ) {
+    assertAdvancedAi(access);
     const workspace = await reviewMonitoringRepository.ensureWorkspace(userId);
     const selectedManagedBusiness = await this.resolveSelectedManagedBusiness(
       workspace.id,
@@ -631,16 +590,26 @@ export class ReviewMonitoringService {
 
     return generateReviewInsights({
       businessName: selectedManagedBusiness?.name ?? workspace.name,
-      reviews: reviews.slice(0, 20).map((review) => ({
-        author: review.author,
-        rating: review.rating,
-        text: review.text,
-        createdAt: review.createdAt.toISOString(),
-      })),
+      businessContext: workspace.settings?.businessContext ?? "",
+      reviews: reviews.slice(0, 20).map((review) => {
+        const classified = classifyReview(review.text, review.rating);
+        return {
+          author: review.author,
+          rating: review.rating,
+          text: review.text,
+          tags: classified.tags,
+          createdAt: review.createdAt.toISOString(),
+        };
+      }),
     });
   }
 
-  async draftReviewReply(userId: string, reviewId: string) {
+  async draftReviewReply(
+    userId: string,
+    access: SubscriptionAccess,
+    reviewId: string,
+  ) {
+    assertAiReplies(access);
     const workspace = await reviewMonitoringRepository.ensureWorkspace(userId);
     const review = await reviewMonitoringRepository.getReviewById(reviewId, workspace.id);
 
@@ -650,6 +619,7 @@ export class ReviewMonitoringService {
 
     return generateReviewReply({
       businessName: review.managedBusiness?.name ?? workspace.name,
+      businessContext: workspace.settings?.businessContext ?? "",
       review: {
         author: review.author,
         rating: review.rating,
@@ -661,9 +631,11 @@ export class ReviewMonitoringService {
 
   async postReviewReply(
     userId: string,
+    access: SubscriptionAccess,
     reviewId: string,
     replyText: string,
   ) {
+    assertAiReplies(access);
     const workspace = await reviewMonitoringRepository.ensureWorkspace(userId);
     const review = await reviewMonitoringRepository.getReviewById(reviewId, workspace.id);
 
@@ -696,7 +668,18 @@ export class ReviewMonitoringService {
     );
 
     if (!response.ok) {
-      throw new Error("Failed to post Google review reply.");
+      const payload = (await response.json().catch(() => null)) as
+        | { error?: { message?: string; status?: string } }
+        | null;
+      const googleMessage = payload?.error?.message?.trim();
+
+      if (response.status === 403 || response.status === 401) {
+        throw new Error(
+          "You are not the owner or authorized manager of this Google Business Profile. Only the owner/manager can post replies.",
+        );
+      }
+
+      throw new Error(googleMessage || "Failed to post Google review reply.");
     }
 
     const repliedAt = new Date();
@@ -713,12 +696,14 @@ export class ReviewMonitoringService {
 
   async fetchLatestReviewsForBusiness(
     userId: string,
+    access: SubscriptionAccess,
     options: {
       managedBusinessId?: string;
       placeId?: string;
       businessName?: string;
     },
   ) {
+    assertPaidPlan(access);
     const workspace = await reviewMonitoringRepository.ensureWorkspace(userId);
     const selectedManagedBusiness = options.managedBusinessId
       ? await reviewMonitoringRepository.getManagedBusiness(
@@ -767,6 +752,7 @@ export class ReviewMonitoringService {
 
     return this.ingestGoogleReviews(
       userId,
+      access,
       options.managedBusinessId,
       placeId,
       placeName,
@@ -777,6 +763,7 @@ export class ReviewMonitoringService {
 
   async ingestGoogleReviews(
     userId: string,
+    access: SubscriptionAccess,
     managedBusinessId: string | undefined,
     placeId: string,
     businessName: string | undefined,
@@ -791,7 +778,7 @@ export class ReviewMonitoringService {
     const safeName =
       businessName?.trim() || selectedManagedBusiness?.name || workspace.name;
 
-    await this.updateSettings(userId, {
+    await this.updateSettings(userId, access, {
       business: {
         name: workspace.name,
         email: workspace.email ?? "",
@@ -810,6 +797,7 @@ export class ReviewMonitoringService {
         sentimentModel: workspace.settings?.sentimentModel ?? "balanced",
         analysisLanguage: workspace.settings?.analysisLanguage ?? "en",
         autoRespond: workspace.settings?.autoRespond ?? true,
+        businessContext: workspace.settings?.businessContext ?? "",
       },
       sources: workspace.sources.map((source) => ({
         key: source.source,
@@ -861,6 +849,11 @@ export class ReviewMonitoringService {
         ]).then((records) => records[0] ?? null);
 
     let storedCount = 0;
+    let reviewLimitReached = false;
+    const reviewLimit = access.plan?.limits.maxStoredReviews ?? null;
+    const existingReviewCount = await reviewMonitoringRepository.countReviews(workspace.id);
+    let remainingReviewSlots =
+      reviewLimit === null ? Number.MAX_SAFE_INTEGER : Math.max(reviewLimit - existingReviewCount, 0);
     const existingReviews = managedBusinessRecord
       ? await reviewMonitoringRepository.listReviews(workspace.id, managedBusinessRecord.id)
       : [];
@@ -879,9 +872,20 @@ export class ReviewMonitoringService {
         continue;
       }
       const externalRef = review.review_resource_name ?? this.makeExternalRef(placeId, review);
-      const sentiment = this.sentimentFromRating(review.rating);
+      const sentimentResult = await classifyReviewSentimentFromText({
+        reviewText: review.text,
+        rating: review.rating,
+        businessName: managedBusinessRecord.name,
+      });
+      const sentiment = sentimentResult.sentiment;
+      const classified = classifyReview(review.text, review.rating ?? 3);
       const createdAt = review.time ? new Date(review.time * 1000) : new Date();
       const existedBefore = existingExternalRefs.has(externalRef);
+
+      if (!existedBefore && remainingReviewSlots <= 0) {
+        reviewLimitReached = true;
+        continue;
+      }
 
       await reviewMonitoringRepository.upsertReview({
         businessId: workspace.id,
@@ -890,6 +894,9 @@ export class ReviewMonitoringService {
         text: review.text,
         rating: review.rating,
         sentiment,
+        sentimentConfidence: sentimentResult.confidence ?? null,
+        sentimentReason: sentimentResult.reason ?? null,
+        reviewTags: classified.tags,
         source: "GOOGLE",
         externalRef,
         reviewResourceName: review.review_resource_name ?? null,
@@ -903,13 +910,14 @@ export class ReviewMonitoringService {
       if (!existedBefore) {
         existingExternalRefs.add(externalRef);
         storedCount += 1;
+        remainingReviewSlots -= 1;
         if (review.rating <= 2) {
           await reviewMonitoringRepository.createAlert(workspace.id, {
             managedBusinessId: managedBusinessRecord.id,
             type: "NEGATIVE_REVIEW",
             title: "New Negative Review Detected",
             description: `${review.author_name ?? "Anonymous"} left a ${review.rating}-star review on Google.`,
-            severity: this.severityFromRating(review.rating),
+            severity: severityFromRating(review.rating),
             isRead: false,
           });
         }
@@ -924,6 +932,8 @@ export class ReviewMonitoringService {
         rating: placeRating ?? null,
       },
       storedCount,
+      reviewLimitReached,
+      reviewLimit,
     };
   }
 
@@ -965,26 +975,6 @@ export class ReviewMonitoringService {
     const neutral = dayReviews.filter((r) => r.sentiment === "NEUTRAL").length;
     const negative = dayReviews.filter((r) => r.sentiment === "NEGATIVE").length;
     return `${positive} positive, ${negative} negative, ${neutral} neutral`;
-  }
-
-  private sentimentFromRating(rating: number): Sentiment {
-    if (rating <= 2) {
-      return "NEGATIVE";
-    }
-    if (rating === 3) {
-      return "NEUTRAL";
-    }
-    return "POSITIVE";
-  }
-
-  private severityFromRating(rating: number): AlertSeverity {
-    if (rating <= 1) {
-      return "HIGH";
-    }
-    if (rating <= 2) {
-      return "MEDIUM";
-    }
-    return "LOW";
   }
 
   private async resolveSelectedManagedBusiness(
@@ -1039,7 +1029,7 @@ export class ReviewMonitoringService {
             author_name: review.authorAttribution?.displayName,
             text: review.text?.text,
             rating: review.rating,
-            time: this.toUnixSeconds(review.publishTime),
+            time: toUnixSeconds(review.publishTime),
           })) ?? [];
       }
     }
@@ -1120,8 +1110,8 @@ export class ReviewMonitoringService {
         payload.reviews?.map((review) => ({
           author_name: review.reviewer?.displayName,
           text: review.comment,
-          rating: this.googleStarRatingToNumber(review.starRating),
-          time: this.toUnixSeconds(review.createTime),
+          rating: googleStarRatingToNumber(review.starRating),
+          time: toUnixSeconds(review.createTime),
           review_resource_name: review.name,
           review_reply: review.reviewReply?.comment,
           review_replied_at: review.reviewReply?.updateTime,
@@ -1129,68 +1119,9 @@ export class ReviewMonitoringService {
     };
   }
 
-  private googleStarRatingToNumber(
-    value: "ONE" | "TWO" | "THREE" | "FOUR" | "FIVE" | undefined,
-  ) {
-    const mapping = {
-      ONE: 1,
-      TWO: 2,
-      THREE: 3,
-      FOUR: 4,
-      FIVE: 5,
-    } as const;
-
-    return value ? mapping[value] : undefined;
-  }
-
-  private toUnixSeconds(iso: string | undefined) {
-    if (!iso) {
-      return undefined;
-    }
-
-    const ms = Date.parse(iso);
-    if (Number.isNaN(ms)) {
-      return undefined;
-    }
-
-    return Math.floor(ms / 1000);
-  }
-
   private makeExternalRef(placeId: string, review: GoogleReview) {
     const base = `${placeId}|${review.author_name ?? "anonymous"}|${review.time ?? "0"}|${review.text ?? ""}`;
     return crypto.createHash("sha256").update(base).digest("hex");
-  }
-
-  private formatStorefrontAddress(
-    address:
-      | {
-          addressLines?: string[];
-          locality?: string;
-          administrativeArea?: string;
-          postalCode?: string;
-        }
-      | undefined,
-  ) {
-    if (!address) {
-      return null;
-    }
-
-    const parts = [
-      ...(address.addressLines ?? []),
-      address.locality,
-      address.administrativeArea,
-      address.postalCode,
-    ].filter(Boolean);
-
-    return parts.length > 0 ? parts.join(", ") : null;
-  }
-
-  private prettyEnum(value: string) {
-    return value
-      .toLowerCase()
-      .split("_")
-      .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-      .join(" ");
   }
 }
 

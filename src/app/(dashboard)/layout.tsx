@@ -1,5 +1,6 @@
-﻿import { Bell, Menu } from "lucide-react";
+﻿import { Menu } from "lucide-react";
 import { AppSidebar } from "@/components/app-sidebar";
+import { DashboardHeaderControls } from "@/components/dashboard-header-controls";
 import { DashboardPrefetcher } from "@/components/providers/dashboard-prefetcher";
 import { Button } from "@/components/ui/button";
 
@@ -18,15 +19,7 @@ export default function DashboardLayout({
             <Menu className="h-5 w-5" />
           </Button>
           <div className="hidden md:block" />
-          <div className="flex items-center gap-4">
-            <Button variant="ghost" size="icon" className="relative">
-              <Bell className="h-5 w-5" />
-              <span className="absolute right-1 top-1 h-2 w-2 rounded-full bg-[#EF4444]" />
-            </Button>
-            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-[#0D9488] text-xs text-white">
-              JD
-            </div>
-          </div>
+          <DashboardHeaderControls />
         </header>
         <main className="flex-1 overflow-auto bg-[#F8F6F1] p-4 md:p-8">
           {children}
@@ -35,6 +28,3 @@ export default function DashboardLayout({
     </div>
   );
 }
-
-
-
