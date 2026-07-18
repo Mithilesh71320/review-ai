@@ -32,10 +32,13 @@ export function AlertsView() {
     alertsQuery,
     data,
     hasAlerts,
+    hasMoreAlerts,
+    alertsFetchingNextPage,
     savingRule,
     syncReviewsMutation,
     markAllReadMutation,
     handleRuleToggle,
+    loadMoreAlerts,
   } = useAlertsWorkspace();
 
   return (
@@ -161,6 +164,16 @@ export function AlertsView() {
                   </Card>
                 );
               })}
+              {hasMoreAlerts && (
+                <Button
+                  variant="outline"
+                  className="w-full"
+                  disabled={alertsFetchingNextPage}
+                  onClick={() => void loadMoreAlerts()}
+                >
+                  {alertsFetchingNextPage ? "Loading..." : "Load more alerts"}
+                </Button>
+              )}
             </div>
           )}
 

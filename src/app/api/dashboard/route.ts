@@ -12,7 +12,12 @@ export const GET = withApiLogger(async (req: Request) => {
 
   const { searchParams } = new URL(req.url);
   const managedBusinessId = searchParams.get("managedBusinessId") ?? undefined;
+  const trendDays = Number(searchParams.get("trendDays") ?? 30);
 
-  const data = await reviewMonitoringService.getDashboard(userId, managedBusinessId);
+  const data = await reviewMonitoringService.getDashboard(
+    userId,
+    managedBusinessId,
+    trendDays,
+  );
   return NextResponse.json(data);
 });

@@ -151,6 +151,16 @@ export function ReviewsView() {
                 {workspace.reviews.length === 0 && (
                   <p className="text-sm text-muted-foreground">No reviews available.</p>
                 )}
+                {workspace.hasMoreReviews && (
+                  <Button
+                    variant="outline"
+                    className="w-full"
+                    disabled={workspace.reviewsFetchingNextPage}
+                    onClick={() => void workspace.loadMoreReviews()}
+                  >
+                    {workspace.reviewsFetchingNextPage ? "Loading..." : "Load more reviews"}
+                  </Button>
+                )}
               </div>
             )}
           </CardContent>

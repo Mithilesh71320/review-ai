@@ -62,6 +62,11 @@ function reviewScope(businessId: string, managedBusinessId?: string) {
   };
 }
 
+type PageOptions = {
+  take: number;
+  cursor?: string;
+};
+
 export class ReviewMonitoringRepository {
   /**
    * Fast path: single SELECT with relations when workspace already exists.
@@ -178,6 +183,31 @@ export class ReviewMonitoringRepository {
     });
   }
 
+  async listReviewsPage(
+    businessId: string,
+    managedBusinessId: string | undefined,
+    options: PageOptions,
+  ) {
+    return prisma.review.findMany({
+      where: reviewScope(businessId, managedBusinessId),
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      take: options.take,
+      ...(options.cursor ? { cursor: { id: options.cursor }, skip: 1 } : {}),
+      select: {
+        id: true,
+        author: true,
+        text: true,
+        rating: true,
+        sentiment: true,
+        source: true,
+        createdAt: true,
+        reviewResourceName: true,
+        reviewReply: true,
+        reviewRepliedAt: true,
+      },
+    });
+  }
+
   async listRecentReviews(businessId: string, managedBusinessId: string | undefined, take = 8) {
     return prisma.review.findMany({
       where: reviewScope(businessId, managedBusinessId),
@@ -196,7 +226,11 @@ export class ReviewMonitoringRepository {
   /**
    * Dashboard stats via SQL aggregates — never loads full review rows.
    */
-  async getDashboardMetrics(businessId: string, managedBusinessId?: string) {
+  async getDashboardMetrics(
+    businessId: string,
+    managedBusinessId?: string,
+    trendDays = 30,
+  ) {
     const scope = reviewScope(businessId, managedBusinessId);
     const now = new Date();
     const startOfDay = new Date(now);
@@ -205,7 +239,9 @@ export class ReviewMonitoringRepository {
     sevenDaysAgo.setDate(now.getDate() - 7);
     const fourteenDaysAgo = new Date(now);
     fourteenDaysAgo.setDate(now.getDate() - 14);
-    const sixMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 5, 1);
+    const trendStart = new Date(now);
+    trendStart.setDate(now.getDate() - trendDays + 1);
+    trendStart.setHours(0, 0, 0, 0);
 
     const [
       totalAgg,
@@ -254,7 +290,7 @@ export class ReviewMonitoringRepository {
       }),
       this.listRecentReviews(businessId, managedBusinessId, 8),
       prisma.review.findMany({
-        where: { ...scope, createdAt: { gte: sixMonthsAgo } },
+        where: { ...scope, createdAt: { gte: trendStart } },
         select: { rating: true, createdAt: true },
         orderBy: { createdAt: "asc" },
       }),
@@ -310,6 +346,19 @@ export class ReviewMonitoringRepository {
       where: reviewScope(businessId, managedBusinessId),
       orderBy: { createdAt: "desc" },
       take: options?.take ?? 100,
+    });
+  }
+
+  async listAlertsPage(
+    businessId: string,
+    managedBusinessId: string | undefined,
+    options: PageOptions,
+  ) {
+    return prisma.alert.findMany({
+      where: reviewScope(businessId, managedBusinessId),
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      take: options.take,
+      ...(options.cursor ? { cursor: { id: options.cursor }, skip: 1 } : {}),
     });
   }
 

@@ -10,6 +10,7 @@ export type DashboardResponse = {
     activeAlertsText: string;
   };
   trend: Array<{ month: string; rating: number }>;
+  trendDays: 7 | 30 | 90;
   sentiment: Array<{ name: string; value: number; color: string }>;
   recentReviews: Array<{
     id: string;

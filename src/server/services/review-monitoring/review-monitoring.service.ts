@@ -12,46 +12,98 @@ import { insightsService } from "./insights.service";
 import { reviewsReplyService } from "./reviews-reply.service";
 import { fetchReviewsService } from "./fetch-reviews.service";
 
-const REVIEWS_PAGE_LIMIT = 200;
+const DEFAULT_REVIEWS_PAGE_LIMIT = 25;
+const MAX_REVIEWS_PAGE_LIMIT = 100;
+const DEFAULT_ALERTS_PAGE_LIMIT = 25;
+const MAX_ALERTS_PAGE_LIMIT = 100;
+const TREND_DAY_OPTIONS = [7, 30, 90] as const;
 
-function buildSixMonthTrend(
+function normalizePageLimit(value: number | undefined, fallback: number, max: number) {
+  if (!value || !Number.isFinite(value)) return fallback;
+  return Math.max(1, Math.min(max, Math.floor(value)));
+}
+
+function normalizeTrendDays(value: number | undefined) {
+  return TREND_DAY_OPTIONS.includes(value as (typeof TREND_DAY_OPTIONS)[number])
+    ? value!
+    : 30;
+}
+
+function buildRatingTrend(
   reviews: Array<{ rating: number; createdAt: Date }>,
   fromDate: Date,
+  days: number,
 ) {
-  const months: Array<{ key: string; label: string }> = [];
+  const bucketCount = 6;
+  const bucketSize = Math.ceil(days / bucketCount);
+  const start = new Date(fromDate);
+  start.setDate(fromDate.getDate() - days + 1);
+  start.setHours(0, 0, 0, 0);
 
-  for (let i = 5; i >= 0; i -= 1) {
-    const date = new Date(fromDate.getFullYear(), fromDate.getMonth() - i, 1);
-    const key = `${date.getFullYear()}-${date.getMonth()}`;
-    const label = date.toLocaleString("en-US", { month: "short" });
-    months.push({ key, label });
-  }
+  const buckets = Array.from({ length: bucketCount }, (_, index) => {
+    const bucketStart = new Date(start);
+    bucketStart.setDate(start.getDate() + index * bucketSize);
+    const bucketEnd = new Date(start);
+    bucketEnd.setDate(start.getDate() + (index + 1) * bucketSize);
 
-  return months.map(({ key, label }) => {
-    const monthReviews = reviews.filter(
-      (r) => `${r.createdAt.getFullYear()}-${r.createdAt.getMonth()}` === key,
-    );
+    return {
+      start: bucketStart,
+      end: bucketEnd,
+      label: bucketStart.toLocaleString("en-US", {
+        month: "short",
+        day: "numeric",
+      }),
+    };
+  });
+
+  return buckets.map((bucket, index) => {
+    const bucketReviews = reviews.filter((review) => {
+      if (index === buckets.length - 1) {
+        return review.createdAt >= bucket.start && review.createdAt <= fromDate;
+      }
+      return review.createdAt >= bucket.start && review.createdAt < bucket.end;
+    });
+
     const rating =
-      monthReviews.length === 0
+      bucketReviews.length === 0
         ? 0
-        : monthReviews.reduce((sum, r) => sum + r.rating, 0) / monthReviews.length;
-    return { month: label, rating: Number(rating.toFixed(1)) };
+        : bucketReviews.reduce((sum, review) => sum + review.rating, 0) /
+          bucketReviews.length;
+
+    return { month: bucket.label, rating: Number(rating.toFixed(1)) };
   });
 }
 
+function getNextCursor<T extends { id: string }>(items: T[], requestedTake: number) {
+  if (items.length <= requestedTake) {
+    return { pageItems: items, nextCursor: null };
+  }
+
+  const pageItems = items.slice(0, requestedTake);
+  return {
+    pageItems,
+    nextCursor: pageItems.at(-1)?.id ?? null,
+  };
+}
+
 export class ReviewMonitoringService {
-  async getDashboard(userId: string, managedBusinessId?: string) {
+  async getDashboard(
+    userId: string,
+    managedBusinessId?: string,
+    trendDaysInput?: number,
+  ) {
     // ensureWorkspace is a single fast SELECT for existing users
     const workspace = await reviewMonitoringRepository.ensureWorkspace(userId);
     const selectedManagedBusiness =
-      await reviewMonitoringRepository.resolveSelectedManagedBusiness(
-        workspace.id,
-        managedBusinessId,
-      );
+      workspace.managedBusinesses.find((business) => business.id === managedBusinessId) ??
+      workspace.managedBusinesses[0];
+
+    const trendDays = normalizeTrendDays(trendDaysInput);
 
     const metrics = await reviewMonitoringRepository.getDashboardMetrics(
       workspace.id,
       selectedManagedBusiness?.id,
+      trendDays,
     );
 
     const {
@@ -85,7 +137,8 @@ export class ReviewMonitoringService {
             ? `${negativeToday} negative reviews detected today`
             : "No negative reviews detected today",
       },
-      trend: buildSixMonthTrend(trendRows, now),
+      trend: buildRatingTrend(trendRows, now, trendDays),
+      trendDays,
       sentiment: [
         {
           name: "Positive",
@@ -120,7 +173,11 @@ export class ReviewMonitoringService {
     };
   }
 
-  async getReviews(userId: string, managedBusinessId?: string) {
+  async getReviews(
+    userId: string,
+    managedBusinessId?: string,
+    options?: { cursor?: string; limit?: number },
+  ) {
     const workspace = await reviewMonitoringRepository.ensureWorkspace(userId);
     const selectedManagedBusiness =
       await reviewMonitoringRepository.resolveSelectedManagedBusiness(
@@ -128,14 +185,20 @@ export class ReviewMonitoringService {
         managedBusinessId,
       );
 
-    const reviews = await reviewMonitoringRepository.listReviews(
+    const pageLimit = normalizePageLimit(
+      options?.limit,
+      DEFAULT_REVIEWS_PAGE_LIMIT,
+      MAX_REVIEWS_PAGE_LIMIT,
+    );
+    const reviews = await reviewMonitoringRepository.listReviewsPage(
       workspace.id,
       selectedManagedBusiness?.id,
-      { take: REVIEWS_PAGE_LIMIT, selectLight: true },
+      { take: pageLimit + 1, cursor: options?.cursor },
     );
+    const { pageItems, nextCursor } = getNextCursor(reviews, pageLimit);
 
     return {
-      reviews: reviews.map((r) => ({
+      reviews: pageItems.map((r) => ({
         ...classifyReview(r.text, r.rating),
         id: r.id,
         author: r.author,
@@ -149,10 +212,16 @@ export class ReviewMonitoringService {
         repliedAt: r.reviewRepliedAt?.toISOString() ?? null,
       })),
       selectedBusinessId: selectedManagedBusiness?.id ?? null,
+      nextCursor,
+      hasMore: Boolean(nextCursor),
     };
   }
 
-  async getAlerts(userId: string, managedBusinessId?: string) {
+  async getAlerts(
+    userId: string,
+    managedBusinessId?: string,
+    options?: { cursor?: string; limit?: number },
+  ) {
     const workspace = await reviewMonitoringRepository.ensureWorkspace(userId);
     const selectedManagedBusiness =
       await reviewMonitoringRepository.resolveSelectedManagedBusiness(
@@ -161,15 +230,24 @@ export class ReviewMonitoringService {
       );
 
     const managedId = selectedManagedBusiness?.id;
+    const pageLimit = normalizePageLimit(
+      options?.limit,
+      DEFAULT_ALERTS_PAGE_LIMIT,
+      MAX_ALERTS_PAGE_LIMIT,
+    );
     const [alerts, rules, unreadCount] = await Promise.all([
-      reviewMonitoringRepository.listAlerts(workspace.id, managedId, { take: 100 }),
+      reviewMonitoringRepository.listAlertsPage(workspace.id, managedId, {
+        take: pageLimit + 1,
+        cursor: options?.cursor,
+      }),
       reviewMonitoringRepository.listAlertRules(workspace.id),
       reviewMonitoringRepository.countUnreadAlerts(workspace.id, managedId),
     ]);
+    const { pageItems, nextCursor } = getNextCursor(alerts, pageLimit);
 
     return {
       unreadCount,
-      alerts: alerts.map((a) => ({
+      alerts: pageItems.map((a) => ({
         id: a.id,
         type: a.type.toLowerCase(),
         title: a.title,
@@ -186,6 +264,8 @@ export class ReviewMonitoringService {
         enabled: r.enabled,
       })),
       selectedBusinessId: selectedManagedBusiness?.id ?? null,
+      nextCursor,
+      hasMore: Boolean(nextCursor),
     };
   }
 

@@ -16,4 +16,7 @@ export type AlertsResponse = {
     description: string;
     enabled: boolean;
   }>;
+  selectedBusinessId?: string | null;
+  nextCursor?: string | null;
+  hasMore?: boolean;
 };

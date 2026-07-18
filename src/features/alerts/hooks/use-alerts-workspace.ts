@@ -1,7 +1,11 @@
 "use client";
 
 import { useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  useInfiniteQuery,
+  useMutation,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { fetchJson } from "@/lib/api";
 import { queryKeys } from "@/lib/query-keys";
 import type { AlertsResponse } from "@/features/alerts/types";
@@ -22,17 +26,29 @@ export function useAlertsWorkspace() {
 
   const hasPaidPlan = settingsQuery.data?.subscription.hasPaidPlan ?? false;
 
-  const alertsQuery = useQuery({
+  const alertsQuery = useInfiniteQuery({
     queryKey: queryKeys.alerts(effectiveBusinessId),
-    queryFn: () =>
-      fetchJson<AlertsResponse>(
-        `/api/alerts${effectiveBusinessId ? `?managedBusinessId=${effectiveBusinessId}` : ""}`,
-        { cache: "no-store" },
-      ),
+    queryFn: ({ pageParam }) => {
+      const searchParams = new URLSearchParams({ limit: "25" });
+      if (effectiveBusinessId) {
+        searchParams.set("managedBusinessId", effectiveBusinessId);
+      }
+      if (pageParam) {
+        searchParams.set("cursor", pageParam);
+      }
+      return fetchJson<AlertsResponse>(`/api/alerts?${searchParams.toString()}`, {
+        cache: "no-store",
+      });
+    },
+    initialPageParam: null as string | null,
+    getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
   });
 
   const refreshAlerts = async () => {
     void queryClient.invalidateQueries({ queryKey: queryKeys.alerts(effectiveBusinessId) });
+    void queryClient.invalidateQueries({
+      queryKey: queryKeys.alertBadge(effectiveBusinessId),
+    });
     void queryClient.invalidateQueries({
       queryKey: queryKeys.dashboard(effectiveBusinessId),
     });
@@ -79,6 +95,15 @@ export function useAlertsWorkspace() {
     }
   };
 
+  const firstPage = alertsQuery.data?.pages[0];
+  const alerts = alertsQuery.data?.pages.flatMap((page) => page.alerts) ?? [];
+  const data = firstPage
+    ? {
+        ...firstPage,
+        alerts,
+      }
+    : undefined;
+
   return {
     businesses: settingsQuery.data?.businesses,
     effectiveBusinessId,
@@ -86,11 +111,14 @@ export function useAlertsWorkspace() {
     selectedBusiness,
     hasPaidPlan,
     alertsQuery,
-    data: alertsQuery.data,
-    hasAlerts: Boolean(alertsQuery.data?.alerts.length),
+    data,
+    hasAlerts: alerts.length > 0,
+    hasMoreAlerts: alertsQuery.hasNextPage,
+    alertsFetchingNextPage: alertsQuery.isFetchingNextPage,
     savingRule,
     syncReviewsMutation,
     markAllReadMutation,
     handleRuleToggle,
+    loadMoreAlerts: alertsQuery.fetchNextPage,
   };
 }

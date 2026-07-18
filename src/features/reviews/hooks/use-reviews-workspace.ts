@@ -1,7 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  useInfiniteQuery,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import {
   draftReviewReply,
   fetchInsights,
@@ -51,9 +56,12 @@ export function useReviewsWorkspace() {
   const canUseAdvancedAi =
     settingsQuery.data?.subscription.capabilities?.advancedAiRecommendations ?? false;
 
-  const reviewsQuery = useQuery({
+  const reviewsQuery = useInfiniteQuery({
     queryKey: queryKeys.reviews(effectiveBusinessId),
-    queryFn: () => fetchReviews(effectiveBusinessId),
+    queryFn: ({ pageParam }) =>
+      fetchReviews(effectiveBusinessId, { cursor: pageParam, limit: 25 }),
+    initialPageParam: null as string | null,
+    getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
   });
 
   const insightsQuery = useQuery({
@@ -158,7 +166,11 @@ export function useReviewsWorkspace() {
   }, [effectiveBusinessId, hasPaidPlan, selectedBusiness?.id]);
 
   const reviews = useMemo(
-    () => filterReviews(reviewsQuery.data?.reviews ?? [], { query, sentiment, source }),
+    () =>
+      filterReviews(
+        reviewsQuery.data?.pages.flatMap((page) => page.reviews) ?? [],
+        { query, sentiment, source },
+      ),
     [reviewsQuery.data, query, sentiment, source],
   );
 
@@ -184,6 +196,8 @@ export function useReviewsWorkspace() {
     // data
     reviews,
     reviewsPending: reviewsQuery.isPending,
+    reviewsFetchingNextPage: reviewsQuery.isFetchingNextPage,
+    hasMoreReviews: reviewsQuery.hasNextPage,
     reviewsError: reviewsQuery.error,
     insightsQuery,
     fetchMessage,
@@ -193,6 +207,7 @@ export function useReviewsWorkspace() {
     // actions
     isRefreshing,
     refreshSelectedBusiness,
+    loadMoreReviews: reviewsQuery.fetchNextPage,
     replyDraftMutation,
     regenerateReplyMutation,
     postReplyMutation,

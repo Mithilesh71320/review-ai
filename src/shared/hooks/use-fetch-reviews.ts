@@ -68,6 +68,7 @@ export function useFetchReviewsMutation(options: Options) {
         queryKeys.reviews(managedBusinessId),
         queryKeys.dashboard(managedBusinessId),
         queryKeys.alerts(managedBusinessId),
+        queryKeys.alertBadge(managedBusinessId),
         queryKeys.insights(managedBusinessId),
       ] as const;
 

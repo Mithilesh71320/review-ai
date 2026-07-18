@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo } from "react";
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { fetchJson } from "@/lib/api";
 import { queryKeys } from "@/lib/query-keys";
@@ -10,6 +11,7 @@ import { useManagedBusinessSelection } from "@/shared/hooks/use-managed-business
 import { useWorkspaceSettingsQuery } from "@/shared/hooks/use-settings-query";
 
 export function useDashboardWorkspace() {
+  const [trendDays, setTrendDays] = useState<7 | 30 | 90>(30);
   const settingsQuery = useWorkspaceSettingsQuery();
   const {
     setSelectedBusinessId,
@@ -20,12 +22,17 @@ export function useDashboardWorkspace() {
   const hasPaidPlan = settingsQuery.data?.subscription.hasPaidPlan ?? false;
 
   const dashboardQuery = useQuery({
-    queryKey: queryKeys.dashboard(effectiveBusinessId),
+    queryKey: queryKeys.dashboard(effectiveBusinessId, trendDays),
     queryFn: () =>
       fetchJson<DashboardResponse>(
-        `/api/dashboard${effectiveBusinessId ? `?managedBusinessId=${effectiveBusinessId}` : ""}`,
+        `/api/dashboard?trendDays=${trendDays}${
+          effectiveBusinessId ? `&managedBusinessId=${effectiveBusinessId}` : ""
+        }`,
         { cache: "no-store" },
       ),
+    // Wait for settings to resolve so we fire exactly one request with the
+    // real business ID instead of an eager null-ID request + a second real one.
+    enabled: settingsQuery.isSuccess,
   });
 
   const refreshMutation = useFetchReviewsMutation({
@@ -57,6 +64,8 @@ export function useDashboardWorkspace() {
     setSelectedBusinessId,
     selectedBusiness,
     hasPaidPlan,
+    trendDays,
+    setTrendDays,
     dashboardQuery,
     data,
     stats,

@@ -16,6 +16,8 @@ export type ReviewItem = {
 export type ReviewsResponse = {
   reviews: ReviewItem[];
   selectedBusinessId?: string | null;
+  nextCursor?: string | null;
+  hasMore?: boolean;
 };
 
 export type InsightsResponse = {

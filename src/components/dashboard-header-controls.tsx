@@ -31,7 +31,7 @@ export function DashboardHeaderControls() {
   const businessId = settings?.businesses[0]?.id ?? null;
 
   const { data: alerts } = useQuery({
-    queryKey: queryKeys.alerts(businessId),
+    queryKey: queryKeys.alertBadge(businessId),
     queryFn: () =>
       fetchJson<AlertsResponse>(
         `/api/alerts${businessId ? `?managedBusinessId=${businessId}` : ""}`,

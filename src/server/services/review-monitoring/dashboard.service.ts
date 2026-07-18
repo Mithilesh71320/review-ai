@@ -8,10 +8,8 @@ export class DashboardService {
   async getDashboard(userId: string, managedBusinessId?: string) {
     const workspace = await reviewMonitoringRepository.ensureWorkspace(userId);
     const selectedManagedBusiness =
-      await reviewMonitoringRepository.resolveSelectedManagedBusiness(
-        workspace.id,
-        managedBusinessId,
-      );
+      workspace.managedBusinesses.find((business) => business.id === managedBusinessId) ??
+      workspace.managedBusinesses[0];
 
     const metrics = await reviewMonitoringRepository.getDashboardMetrics(
       workspace.id,

@@ -12,7 +12,12 @@ export const GET = withApiLogger(async (req: Request) => {
 
   const { searchParams } = new URL(req.url);
   const managedBusinessId = searchParams.get("managedBusinessId") ?? undefined;
+  const cursor = searchParams.get("cursor") ?? undefined;
+  const limit = Number(searchParams.get("limit") ?? 25);
 
-  const data = await reviewMonitoringService.getReviews(userId, managedBusinessId);
+  const data = await reviewMonitoringService.getReviews(userId, managedBusinessId, {
+    cursor,
+    limit,
+  });
   return NextResponse.json(data);
 });

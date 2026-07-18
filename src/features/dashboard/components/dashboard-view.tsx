@@ -1,5 +1,6 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import {
   AlertTriangle,
   MessageCircle,
@@ -8,18 +9,6 @@ import {
   Star,
   TrendingUp,
 } from "lucide-react";
-import {
-  Area,
-  AreaChart,
-  CartesianGrid,
-  Cell,
-  Pie,
-  PieChart,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
 import { DashboardSkeleton } from "@/components/dashboard-skeletons";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -27,6 +16,33 @@ import { Card } from "@/components/ui/card";
 import { useDashboardWorkspace } from "@/features/dashboard/hooks/use-dashboard-workspace";
 import { BusinessSelect } from "@/shared/components/business-select";
 import { PaidPlanBanner } from "@/shared/components/paid-plan-banner";
+
+/**
+ * Lazy-load Recharts (~200 KB) so stat cards + header paint first (LCP).
+ * Both chart components share the same dynamic chunk, so once one loads
+ * the other is instantly available — no double-download.
+ */
+const chartLoadingFallback = (
+  <div className="flex h-[220px] items-center justify-center text-sm text-[#78716C]">
+    Loading charts…
+  </div>
+);
+
+const RatingTrendChart = dynamic(
+  () =>
+    import("@/features/dashboard/components/dashboard-charts").then(
+      (mod) => mod.RatingTrendChart,
+    ),
+  { ssr: false, loading: () => chartLoadingFallback },
+);
+
+const SentimentDonutChart = dynamic(
+  () =>
+    import("@/features/dashboard/components/dashboard-charts").then(
+      (mod) => mod.SentimentDonutChart,
+    ),
+  { ssr: false, loading: () => chartLoadingFallback },
+);
 
 function Stars({ rating }: { rating: number }) {
   return (
@@ -44,6 +60,12 @@ function sentimentColor(sentiment: string) {
   return "bg-[#D97706] text-white";
 }
 
+const trendRangeOptions = [
+  { days: 7, label: "1 Week" },
+  { days: 30, label: "1 Month" },
+  { days: 90, label: "3 Months" },
+] as const;
+
 export function DashboardView() {
   const {
     businesses,
@@ -57,6 +79,8 @@ export function DashboardView() {
     chartSentiment,
     positivePercent,
     sentimentToday,
+    trendDays,
+    setTrendDays,
     refreshMutation,
   } = useDashboardWorkspace();
 
@@ -87,6 +111,23 @@ export function DashboardView() {
           <p className="mt-1 text-sm text-[#78716C]" style={{ fontFamily: "Inter" }}>
             Overview of your review monitoring activity
           </p>
+          <div className="mt-4 flex flex-wrap gap-2">
+            {trendRangeOptions.map((option) => (
+              <Button
+                key={option.days}
+                variant={trendDays === option.days ? "default" : "outline"}
+                size="sm"
+                onClick={() => setTrendDays(option.days)}
+                className={
+                  trendDays === option.days
+                    ? "rounded-full bg-[#0D9488] text-white"
+                    : "rounded-full"
+                }
+              >
+                {option.label}
+              </Button>
+            ))}
+          </div>
         </div>
         <div className="flex items-center gap-3">
           <BusinessSelect
@@ -173,100 +214,14 @@ export function DashboardView() {
 
       <div className="grid gap-6 xl:grid-cols-5">
         <Card className="rounded-xl border-[#E7E5E4] bg-white p-6 shadow-sm xl:col-span-3">
-          <div className="space-y-4">
-            <div>
-              <h3
-                className="text-base text-[#1C1917]"
-                style={{ fontFamily: "Playfair Display", fontWeight: 600 }}
-              >
-                Rating Trend
-              </h3>
-              <p className="text-xs text-[#78716C]">Your average rating over time</p>
-            </div>
-            <div className="flex gap-2">
-              {["30D", "60D", "90D"].map((period, index) => (
-                <Button
-                  key={period}
-                  variant={index === 0 ? "default" : "outline"}
-                  size="sm"
-                  className={
-                    index === 0 ? "rounded-full bg-[#0D9488] text-white" : "rounded-full"
-                  }
-                >
-                  {period}
-                </Button>
-              ))}
-            </div>
-            <ResponsiveContainer width="100%" height={220}>
-              <AreaChart data={data.trend}>
-                <defs>
-                  <linearGradient id="colorRating" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#0D9488" stopOpacity={0.3} />
-                    <stop offset="95%" stopColor="#0D9488" stopOpacity={0} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="#E7E5E4" />
-                <XAxis dataKey="month" tick={{ fontSize: 12, fill: "#78716C" }} />
-                <YAxis domain={[0, 5]} tick={{ fontSize: 12, fill: "#78716C" }} />
-                <Tooltip />
-                <Area
-                  type="monotone"
-                  dataKey="rating"
-                  stroke="#0D9488"
-                  strokeWidth={2}
-                  fillOpacity={1}
-                  fill="url(#colorRating)"
-                />
-              </AreaChart>
-            </ResponsiveContainer>
-          </div>
+          <RatingTrendChart trend={data.trend} trendDays={trendDays} />
         </Card>
 
         <Card className="rounded-xl border-[#E7E5E4] bg-white p-6 shadow-sm xl:col-span-2">
-          <div className="space-y-4">
-            <h3
-              className="text-base text-[#1C1917]"
-              style={{ fontFamily: "Playfair Display", fontWeight: 600 }}
-            >
-              Sentiment Breakdown
-            </h3>
-            <div className="flex flex-col items-center">
-              <div className="relative">
-                <PieChart width={140} height={140}>
-                  <Pie
-                    data={chartSentiment}
-                    cx={70}
-                    cy={70}
-                    innerRadius={45}
-                    outerRadius={70}
-                    paddingAngle={2}
-                    dataKey="value"
-                  >
-                    {chartSentiment.map((entry, index) => (
-                      <Cell key={index} fill={entry.color} />
-                    ))}
-                  </Pie>
-                </PieChart>
-                <div className="absolute inset-0 flex items-center justify-center text-2xl font-bold">
-                  {positivePercent}%
-                </div>
-              </div>
-              <div className="mt-4 w-full space-y-2">
-                {chartSentiment.map((item) => (
-                  <div key={item.name} className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <div
-                        className="h-3 w-3 rounded-full"
-                        style={{ backgroundColor: item.color }}
-                      />
-                      <span className="text-sm text-[#78716C]">{item.name}</span>
-                    </div>
-                    <span className="text-sm">{item.value}%</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
+          <SentimentDonutChart
+            chartSentiment={chartSentiment}
+            positivePercent={positivePercent}
+          />
         </Card>
       </div>
 
