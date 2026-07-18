@@ -4,6 +4,14 @@ import type { AlertSeverity, Sentiment } from "@/generated/prisma/client";
  * Rule-based review tagging used for UI filters + AI insight context.
  * Keep this deterministic and side-effect free.
  */
+export function prettyEnum(value: string) {
+  return value
+    .toLowerCase()
+    .split("_")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
 export function classifyReview(text: string, rating: number) {
   const normalized = text.toLowerCase();
   const tags = new Set<string>();

@@ -31,3 +31,9 @@ export function formatStorefrontAddress(
 
   return parts.length > 0 ? parts.join(", ") : null;
 }
+
+export function severityFromRating(rating: number): "HIGH" | "MEDIUM" | "LOW" {
+  if (rating <= 1) return "HIGH";
+  if (rating <= 2) return "MEDIUM";
+  return "LOW";
+}

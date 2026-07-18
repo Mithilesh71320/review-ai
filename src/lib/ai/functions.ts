@@ -1,10 +1,34 @@
-import {
-  ReviewInsightsSchema,
-  ReviewReplySchema,
-  ReviewSentimentSchema,
-} from "@/lib/ai-schemas";
+import { z } from "zod";
 
-type InsightInput = {
+const ReviewSentimentSchema = z.object({
+  sentiment: z.enum(["POSITIVE", "NEUTRAL", "NEGATIVE"]),
+  reason: z.string().min(1).max(200),
+  confidence: z.number().min(0).max(1).optional(),
+});
+
+const ReviewInsightsSchema = z.object({
+  improvedOrChanged: z.array(z.string().min(1)).min(1).max(5),
+  remainSame: z.array(z.string().min(1)).min(1).max(5),
+  recommendedActions: z
+    .array(
+      z.object({
+        action: z.string().min(1),
+        evidence: z.string().min(1),
+        impact: z.enum(["high", "medium", "low"]),
+        effort: z.enum(["high", "medium", "low"]),
+      }),
+    )
+    .min(1)
+    .max(5),
+});
+
+const ReviewReplySchema = z.object({
+  reply: z.string().min(10).max(600),
+  tone: z.string().min(1),
+  confidence: z.enum(["high", "medium", "low"]),
+});
+
+export type InsightInput = {
   businessName: string;
   businessContext?: string;
   reviews: Array<{
@@ -16,7 +40,7 @@ type InsightInput = {
   }>;
 };
 
-type ReplyInput = {
+export type ReplyInput = {
   businessName: string;
   businessContext?: string;
   review: {
@@ -108,19 +132,13 @@ const stopWords = new Set([
 ]);
 
 function summarizeRatings(ratings: number[]) {
-  if (ratings.length === 0) {
-    return 0;
-  }
-
+  if (ratings.length === 0) return 0;
   return ratings.reduce((sum, rating) => sum + rating, 0) / ratings.length;
 }
 
 function snippet(text: string, limit = 96) {
   const normalized = text.replace(/\s+/g, " ").trim();
-  if (normalized.length <= limit) {
-    return normalized;
-  }
-
+  if (normalized.length <= limit) return normalized;
   return `${normalized.slice(0, limit).trimEnd()}...`;
 }
 
@@ -146,41 +164,21 @@ function topTerms(texts: string[], limit = 4) {
 }
 
 function fallbackInsights(input: InsightInput): ReviewInsights {
-  const ratings = input.reviews.map((review) => review.rating);
+  const ratings = input.reviews.map((r) => r.rating);
   summarizeRatings(ratings);
-  const negativeReviews = input.reviews.filter((review) => review.rating <= 2);
-  const neutralReviews = input.reviews.filter((review) => review.rating === 3);
-  const positiveReviews = input.reviews.filter((review) => review.rating >= 4);
-  const positiveTerms = topTerms(positiveReviews.map((review) => review.text));
-  const negativeTerms = topTerms(negativeReviews.map((review) => review.text));
+  const negativeReviews = input.reviews.filter((r) => r.rating <= 2);
+  const neutralReviews = input.reviews.filter((r) => r.rating === 3);
+  const positiveReviews = input.reviews.filter((r) => r.rating >= 4);
+  const positiveTerms = topTerms(positiveReviews.map((r) => r.text));
+  const negativeTerms = topTerms(negativeReviews.map((r) => r.text));
   const totalReviews = input.reviews.length;
 
   const hasAnyTerm = (terms: string[], candidates: string[]) =>
     terms.some((term) => candidates.some((candidate) => term.includes(candidate)));
 
-  const packingTheme = hasAnyTerm(negativeTerms, [
-    "pack",
-    "order",
-    "missing",
-    "dispatch",
-    "delivery",
-  ]);
-  const hygieneTheme = hasAnyTerm(negativeTerms, [
-    "hygiene",
-    "clean",
-    "dirty",
-    "sanit",
-    "smell",
-  ]);
-  const delayTheme = hasAnyTerm(negativeTerms, [
-    "wait",
-    "slow",
-    "delay",
-    "late",
-    "queue",
-    "response",
-    "call",
-  ]);
+  const packingTheme = hasAnyTerm(negativeTerms, ["pack", "order", "missing", "dispatch", "delivery"]);
+  const hygieneTheme = hasAnyTerm(negativeTerms, ["hygiene", "clean", "dirty", "sanit", "smell"]);
+  const delayTheme = hasAnyTerm(negativeTerms, ["wait", "slow", "delay", "late", "queue", "response", "call"]);
 
   const remainSame = positiveTerms.length < 2
     ? [
@@ -216,18 +214,10 @@ function fallbackInsights(input: InsightInput): ReviewInsights {
   const recommendedActions: ReviewInsights["recommendedActions"] = [];
   const distinctThemes = new Set<string>();
 
-  if (packingTheme) {
-    distinctThemes.add("packing");
-  }
-  if (hygieneTheme) {
-    distinctThemes.add("hygiene");
-  }
-  if (delayTheme) {
-    distinctThemes.add("delay");
-  }
-  if (!packingTheme && !hygieneTheme && !delayTheme && negativeTerms.length > 0) {
-    distinctThemes.add("general");
-  }
+  if (packingTheme) distinctThemes.add("packing");
+  if (hygieneTheme) distinctThemes.add("hygiene");
+  if (delayTheme) distinctThemes.add("delay");
+  if (!packingTheme && !hygieneTheme && !delayTheme && negativeTerms.length > 0) distinctThemes.add("general");
 
   if (distinctThemes.has("packing")) {
     recommendedActions.push({
@@ -262,31 +252,16 @@ function fallbackInsights(input: InsightInput): ReviewInsights {
     });
   }
 
-  return {
-    improvedOrChanged,
-    remainSame,
-    recommendedActions,
-  };
+  return { improvedOrChanged, remainSame, recommendedActions };
 }
 
 function getProvider() {
   const forcedProvider = process.env.AI_PROVIDER?.trim().toLowerCase();
 
-  if (forcedProvider === "openai" && process.env.OPENAI_API_KEY) {
-    return "openai" as const;
-  }
-
-  if (forcedProvider === "gemini" && process.env.GEMINI_API_KEY) {
-    return "gemini" as const;
-  }
-
-  if (process.env.OPENAI_API_KEY) {
-    return "openai" as const;
-  }
-
-  if (process.env.GEMINI_API_KEY) {
-    return "gemini" as const;
-  }
+  if (forcedProvider === "openai" && process.env.OPENAI_API_KEY) return "openai" as const;
+  if (forcedProvider === "gemini" && process.env.GEMINI_API_KEY) return "gemini" as const;
+  if (process.env.OPENAI_API_KEY) return "openai" as const;
+  if (process.env.GEMINI_API_KEY) return "gemini" as const;
 
   throw new Error("Missing AI provider configuration. Set GEMINI_API_KEY or OPENAI_API_KEY.");
 }
@@ -306,9 +281,7 @@ function extractJson<T>(raw: string): T {
 
 async function callGemini(prompt: string) {
   const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) {
-    throw new Error("GEMINI_API_KEY is not configured.");
-  }
+  if (!apiKey) throw new Error("GEMINI_API_KEY is not configured.");
 
   const response = await fetch(
     `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
@@ -317,10 +290,7 @@ async function callGemini(prompt: string) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: {
-          temperature: 0.3,
-          responseMimeType: "application/json",
-        },
+        generationConfig: { temperature: 0.3, responseMimeType: "application/json" },
       }),
       cache: "no-store",
     },
@@ -328,23 +298,13 @@ async function callGemini(prompt: string) {
 
   if (!response.ok) {
     const payload = (await response.json().catch(() => null)) as
-      | {
-          error?: {
-            message?: string;
-            status?: string;
-          };
-        }
+      | { error?: { message?: string; status?: string } }
       | null;
-
     throw new Error(payload?.error?.message || "Gemini request failed.");
   }
 
   const payload = (await response.json()) as {
-    candidates?: Array<{
-      content?: {
-        parts?: Array<{ text?: string }>;
-      };
-    }>;
+    candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
   };
 
   return payload.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
@@ -352,50 +312,27 @@ async function callGemini(prompt: string) {
 
 async function callOpenAI(prompt: string) {
   const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) {
-    throw new Error("OPENAI_API_KEY is not configured.");
-  }
+  if (!apiKey) throw new Error("OPENAI_API_KEY is not configured.");
 
   const response = await fetch("https://api.openai.com/v1/responses", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      model: process.env.OPENAI_MODEL || "gpt-4.1-mini",
-      input: prompt,
-    }),
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+    body: JSON.stringify({ model: process.env.OPENAI_MODEL || "gpt-4.1-mini", input: prompt }),
     cache: "no-store",
   });
 
   if (!response.ok) {
-    const payload = (await response.json().catch(() => null)) as
-      | {
-          error?: {
-            message?: string;
-          };
-        }
-      | null;
-
+    const payload = (await response.json().catch(() => null)) as { error?: { message?: string } } | null;
     throw new Error(payload?.error?.message || "OpenAI request failed.");
   }
 
-  const payload = (await response.json()) as {
-    output_text?: string;
-  };
-
+  const payload = (await response.json()) as { output_text?: string };
   return payload.output_text ?? "";
 }
 
 async function runModel(prompt: string) {
   const provider = getProvider();
-
-  if (provider === "openai") {
-    return callOpenAI(prompt);
-  }
-
-  return callGemini(prompt);
+  return provider === "openai" ? callOpenAI(prompt) : callGemini(prompt);
 }
 
 function fallbackReviewSentiment(text: string): ReviewSentimentClassification {
@@ -440,14 +377,12 @@ function fallbackReviewSentiment(text: string): ReviewSentimentClassification {
       reason: "Review text includes repeated complaint language and dissatisfaction signals.",
     };
   }
-
   if (positiveHits > negativeHits) {
     return {
       sentiment: "POSITIVE",
       reason: "Review text is mostly praise without dominant complaint signals.",
     };
   }
-
   return {
     sentiment: "NEUTRAL",
     reason: "Review text includes mixed or limited sentiment signals.",
@@ -492,18 +427,14 @@ ${input.reviewText}
     const raw = await runModel(prompt);
     const parsed = extractJson<unknown>(raw);
     const validated = ReviewSentimentSchema.safeParse(parsed);
-    if (!validated.success) {
-      return fallbackReviewSentiment(input.reviewText);
-    }
+    if (!validated.success) return fallbackReviewSentiment(input.reviewText);
     return validated.data;
   } catch {
     return fallbackReviewSentiment(input.reviewText);
   }
 }
 
-export async function generateReviewInsights(
-  input: InsightInput,
-): Promise<ReviewInsights> {
+export async function generateReviewInsights(input: InsightInput): Promise<ReviewInsights> {
   const prompt = `
 You are a senior customer-experience strategist helping a local business improve review performance.
 
@@ -570,18 +501,14 @@ ${JSON.stringify(input.reviews, null, 2)}
     const raw = await runModel(prompt);
     const parsed = extractJson<unknown>(raw);
     const validated = ReviewInsightsSchema.safeParse(parsed);
-    if (!validated.success) {
-      return fallbackInsights(input);
-    }
+    if (!validated.success) return fallbackInsights(input);
     return validated.data;
   } catch {
     return fallbackInsights(input);
   }
 }
 
-export async function generateReviewReply(
-  input: ReplyInput,
-): Promise<ReviewReplyDraft> {
+export async function generateReviewReply(input: ReplyInput): Promise<ReviewReplyDraft> {
   const prompt = `
 You are writing a Google business owner response to a public review for "${input.businessName}".
 
@@ -612,13 +539,10 @@ ${input.businessContext?.trim() ? input.businessContext.trim() : "No additional 
     const raw = await runModel(prompt);
     const parsed = extractJson<unknown>(raw);
     const validated = ReviewReplySchema.safeParse(parsed);
-    if (!validated.success) {
-      throw new Error("Invalid reply format");
-    }
+    if (!validated.success) throw new Error("Invalid reply format");
     return validated.data;
   } catch {
     const positive = input.review.rating >= 4;
-
     return {
       reply: positive
         ? `Thank you for taking the time to share your experience with ${input.businessName}. We are glad to hear you had a positive visit, and we appreciate your support. We look forward to welcoming you again soon.`

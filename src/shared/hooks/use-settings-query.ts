@@ -10,6 +10,7 @@ export function useSettingsQuery() {
   return useQuery({
     queryKey: queryKeys.settings,
     queryFn: () => fetchJson<SettingsResponse>("/api/settings", { cache: "no-store" }),
+    staleTime: 30_000,
   });
 }
 
@@ -18,5 +19,6 @@ export function useWorkspaceSettingsQuery() {
   return useQuery({
     queryKey: queryKeys.settings,
     queryFn: () => fetchJson<WorkspaceSettingsSummary>("/api/settings", { cache: "no-store" }),
+    staleTime: 30_000,
   });
 }

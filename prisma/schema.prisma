@@ -91,6 +91,8 @@ model Review {
 
   @@index([businessId, createdAt(sort: Desc)])
   @@index([managedBusinessId, createdAt(sort: Desc)])
+  @@index([businessId, managedBusinessId, createdAt(sort: Desc)])
+  @@index([businessId, managedBusinessId, sentiment])
   @@unique([businessId, source, externalRef])
 }
 
@@ -108,6 +110,9 @@ model Alert {
   createdAt   DateTime      @default(now())
 
   @@index([businessId, createdAt(sort: Desc)])
+  @@index([businessId, managedBusinessId, createdAt(sort: Desc)])
+  @@index([businessId, isRead, createdAt(sort: Desc)])
+  @@index([businessId, managedBusinessId, isRead])
 }
 
 model SourceConnection {

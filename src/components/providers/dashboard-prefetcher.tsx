@@ -20,6 +20,10 @@ function withBusiness(path: string, managedBusinessId: string | null) {
   return managedBusinessId ? `${path}?managedBusinessId=${managedBusinessId}` : path;
 }
 
+/**
+ * Prefetch only cheap JSON APIs.
+ * Never prefetch /api/insights — that path calls Gemini and can take minutes.
+ */
 export function DashboardPrefetcher() {
   const pathname = usePathname();
   const queryClient = useQueryClient();
@@ -35,6 +39,7 @@ export function DashboardPrefetcher() {
       const settings = await queryClient.fetchQuery({
         queryKey: queryKeys.settings,
         queryFn: () => fetchJson<SettingsResponse>("/api/settings", { cache: "no-store" }),
+        staleTime: 30_000,
       });
 
       if (cancelled) {
@@ -43,22 +48,61 @@ export function DashboardPrefetcher() {
 
       const businessId = settings.businesses[0]?.id ?? null;
 
-      await Promise.allSettled([
+      // Prefetch the page the user is on first, then siblings (not AI insights).
+      const pagePrefetch: Array<Promise<unknown>> = [];
+
+      if (pathname.startsWith("/dashboard") || pathname === "/dashboard") {
+        pagePrefetch.push(
+          queryClient.prefetchQuery({
+            queryKey: queryKeys.dashboard(businessId),
+            queryFn: () =>
+              fetchJson(withBusiness("/api/dashboard", businessId), { cache: "no-store" }),
+            staleTime: 15_000,
+          }),
+        );
+      } else if (pathname.startsWith("/reviews")) {
+        pagePrefetch.push(
+          queryClient.prefetchQuery({
+            queryKey: queryKeys.reviews(businessId),
+            queryFn: () =>
+              fetchJson(withBusiness("/api/reviews", businessId), { cache: "no-store" }),
+            staleTime: 15_000,
+          }),
+        );
+      } else if (pathname.startsWith("/alerts")) {
+        pagePrefetch.push(
+          queryClient.prefetchQuery({
+            queryKey: queryKeys.alerts(businessId),
+            queryFn: () =>
+              fetchJson(withBusiness("/api/alerts", businessId), { cache: "no-store" }),
+            staleTime: 15_000,
+          }),
+        );
+      }
+
+      await Promise.allSettled(pagePrefetch);
+
+      if (cancelled) return;
+
+      // Warm related pages in the background (still no insights).
+      void Promise.allSettled([
         queryClient.prefetchQuery({
           queryKey: queryKeys.dashboard(businessId),
-          queryFn: () => fetchJson(withBusiness("/api/dashboard", businessId), { cache: "no-store" }),
+          queryFn: () =>
+            fetchJson(withBusiness("/api/dashboard", businessId), { cache: "no-store" }),
+          staleTime: 15_000,
         }),
         queryClient.prefetchQuery({
           queryKey: queryKeys.reviews(businessId),
-          queryFn: () => fetchJson(withBusiness("/api/reviews", businessId), { cache: "no-store" }),
+          queryFn: () =>
+            fetchJson(withBusiness("/api/reviews", businessId), { cache: "no-store" }),
+          staleTime: 15_000,
         }),
         queryClient.prefetchQuery({
           queryKey: queryKeys.alerts(businessId),
-          queryFn: () => fetchJson(withBusiness("/api/alerts", businessId), { cache: "no-store" }),
-        }),
-        queryClient.prefetchQuery({
-          queryKey: queryKeys.insights(businessId),
-          queryFn: () => fetchJson(withBusiness("/api/insights", businessId), { cache: "no-store" }),
+          queryFn: () =>
+            fetchJson(withBusiness("/api/alerts", businessId), { cache: "no-store" }),
+          staleTime: 15_000,
         }),
       ]);
     };
