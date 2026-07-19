@@ -1,9 +1,12 @@
 import { NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
+import { resolveSubscriptionAccessForUser } from "@/lib/billing-access";
 import { reviewMonitoringService } from "@/server/services/review-monitoring.service";
+import { withApiLogger } from "@/lib/api-logger";
 
-export async function POST(req: Request) {
-  const { userId } = await auth();
+export const POST = withApiLogger(async (req: Request) => {
+  const authData = await auth();
+  const { userId } = authData;
 
   if (!userId) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -16,7 +19,11 @@ export async function POST(req: Request) {
       businessName?: string;
     };
 
-    const result = await reviewMonitoringService.fetchLatestReviewsForBusiness(userId, {
+    const access = await resolveSubscriptionAccessForUser({
+      userId,
+      has: authData.has,
+    });
+    const result = await reviewMonitoringService.fetchLatestReviewsForBusiness(userId, access, {
       managedBusinessId: body.managedBusinessId,
       placeId: body.placeId,
       businessName: body.businessName,
@@ -29,4 +36,4 @@ export async function POST(req: Request) {
 
     return NextResponse.json({ error: message }, { status: 400 });
   }
-}
+});

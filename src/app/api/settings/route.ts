@@ -1,21 +1,29 @@
 import { NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import { type ReviewSource } from "@/generated/prisma/client";
+import { resolveSubscriptionAccessForUser } from "@/lib/billing-access";
 import { reviewMonitoringService } from "@/server/services/review-monitoring.service";
+import { withApiLogger } from "@/lib/api-logger";
 
-export async function GET() {
-  const { userId } = await auth();
+export const GET = withApiLogger(async () => {
+  const authData = await auth();
+  const { userId } = authData;
 
   if (!userId) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const data = await reviewMonitoringService.getSettings(userId);
+  const access = await resolveSubscriptionAccessForUser({
+    userId,
+    has: authData.has,
+  });
+  const data = await reviewMonitoringService.getSettings(userId, access);
   return NextResponse.json(data);
-}
+});
 
-export async function PUT(req: Request) {
-  const { userId } = await auth();
+export const PUT = withApiLogger(async (req: Request) => {
+  const authData = await auth();
+  const { userId } = authData;
 
   if (!userId) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -40,6 +48,7 @@ export async function PUT(req: Request) {
       sentimentModel: string;
       analysisLanguage: string;
       autoRespond: boolean;
+      businessContext?: string;
     };
     sources: Array<{ key: ReviewSource; connected: boolean }>;
     businesses: Array<{
@@ -52,6 +61,17 @@ export async function PUT(req: Request) {
     }>;
   };
 
-  await reviewMonitoringService.updateSettings(userId, payload);
+  try {
+    const access = await resolveSubscriptionAccessForUser({
+      userId,
+      has: authData.has,
+    });
+    await reviewMonitoringService.updateSettings(userId, access, payload);
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Failed to save settings.";
+    return NextResponse.json({ error: message }, { status: 400 });
+  }
+
   return NextResponse.json({ ok: true });
-}
+});

@@ -1,10 +1,14 @@
 export const queryKeys = {
-  dashboard: (managedBusinessId: string | null) =>
-    ["dashboard", managedBusinessId ?? "default"] as const,
+  dashboard: (managedBusinessId: string | null, trendDays?: number) =>
+    trendDays
+      ? (["dashboard", managedBusinessId ?? "default", trendDays] as const)
+      : (["dashboard", managedBusinessId ?? "default"] as const),
   reviews: (managedBusinessId: string | null) =>
     ["reviews", managedBusinessId ?? "default"] as const,
   alerts: (managedBusinessId: string | null) =>
     ["alerts", managedBusinessId ?? "default"] as const,
+  alertBadge: (managedBusinessId: string | null) =>
+    ["alert-badge", managedBusinessId ?? "default"] as const,
   insights: (managedBusinessId: string | null) =>
     ["insights", managedBusinessId ?? "default"] as const,
   settings: ["settings"] as const,

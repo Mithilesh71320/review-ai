@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import { reviewMonitoringService } from "@/server/services/review-monitoring.service";
+import { withApiLogger } from "@/lib/api-logger";
 
-export async function GET() {
+export const GET = withApiLogger(async () => {
   const { userId } = await auth();
 
   if (!userId) {
@@ -18,4 +19,4 @@ export async function GET() {
 
     return NextResponse.json({ error: message }, { status: 500 });
   }
-}
+});

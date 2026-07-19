@@ -44,7 +44,7 @@ export default function Home() {
               <Link href="/dashboard">Sign In</Link>
             </Button>
             <Button className="bg-[#0D9488] text-white hover:bg-[#134E4A]" asChild>
-              <Link href="/sign-up">Start Free Trial</Link>
+              <Link href="/sign-up">Get Started</Link>
             </Button>
             <Button variant="ghost" size="icon" className="md:hidden">
               <Menu className="h-5 w-5" />
@@ -65,7 +65,7 @@ export default function Home() {
             </p>
             <div className="flex gap-4">
               <Button className="bg-[#0D9488] text-white hover:bg-[#134E4A]" size="lg" asChild>
-                <Link href="/sign-up">Start Free Trial</Link>
+                <Link href="/sign-up">Get Started</Link>
               </Button>
               <Button variant="outline" size="lg">See how it works</Button>
             </div>
@@ -155,7 +155,7 @@ export default function Home() {
           <div className="text-center">
             <h2 className="text-3xl text-[#1C1917]" style={{ fontFamily: "Playfair Display", fontWeight: 600 }}>Simple, transparent pricing</h2>
           </div>
-          <BillingPlanCards plans={plans} ctaHref="/sign-up" showFree={false} compact />
+          <BillingPlanCards plans={plans} ctaHref="/sign-up" compact />
         </div>
       </section>
 
