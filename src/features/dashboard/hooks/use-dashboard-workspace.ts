@@ -45,11 +45,22 @@ export function useDashboardWorkspace() {
   const stats = data?.stats;
   const sentiment = data?.sentiment ?? [];
   const chartSentiment = sentiment.length
-    ? sentiment.map((item) => ({ ...item, color: item.color || "#0D9488" }))
+    ? sentiment.map((item) => ({
+        ...item,
+        // Force blue-forward palette on the dashboard (ignore server green/hsl hues).
+        color:
+          item.name === "Positive"
+            ? "#2563EB"
+            : item.name === "Neutral"
+              ? "#D97706"
+              : item.name === "Negative"
+                ? "#DC2626"
+                : item.color || "#2563EB",
+      }))
     : [
-        { name: "Positive", value: 0, color: "#0D9488" },
+        { name: "Positive", value: 0, color: "#2563EB" },
         { name: "Neutral", value: 0, color: "#D97706" },
-        { name: "Negative", value: 0, color: "#EF4444" },
+        { name: "Negative", value: 0, color: "#DC2626" },
       ];
   const positivePercent =
     chartSentiment.find((item) => item.name === "Positive")?.value ?? 0;
