@@ -1,5 +1,5 @@
-import type { Sentiment } from "@/generated/prisma/client";
-import type { Review } from "@/generated/prisma/client";
+import type { Sentiment } from "@prisma/client";
+import type { Review } from "@prisma/client";
 
 export function buildSixMonthTrend(
   reviews: Array<{ rating: number; createdAt: Date }>,

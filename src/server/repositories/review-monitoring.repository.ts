@@ -4,7 +4,7 @@ import {
   ReviewSource,
   type AlertSeverity,
   type Sentiment,
-} from "@/generated/prisma/client";
+} from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 
 const defaultRules: Record<

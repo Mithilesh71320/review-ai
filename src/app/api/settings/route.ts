@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
-import { type ReviewSource } from "@/generated/prisma/client";
+import { type ReviewSource } from "@prisma/client";
 import { resolveSubscriptionAccessForUser } from "@/lib/billing-access";
 import { reviewMonitoringService } from "@/server/services/review-monitoring.service";
 import { withApiLogger } from "@/lib/api-logger";

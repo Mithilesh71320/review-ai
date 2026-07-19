@@ -1,4 +1,4 @@
-import { AlertType } from "@/generated/prisma/client";
+import { AlertType } from "@prisma/client";
 import {
   assertBusinessLimit,
   type SubscriptionAccess,
