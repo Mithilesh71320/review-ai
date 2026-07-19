@@ -79,6 +79,9 @@ model Review {
   text        String
   rating      Int
   sentiment   Sentiment
+  sentimentConfidence Float?
+  sentimentReason     String?
+  reviewTags          Json?
   source      ReviewSource
   externalRef String?
   reviewResourceName String?
@@ -87,6 +90,9 @@ model Review {
   createdAt   DateTime     @default(now())
 
   @@index([businessId, createdAt(sort: Desc)])
+  @@index([managedBusinessId, createdAt(sort: Desc)])
+  @@index([businessId, managedBusinessId, createdAt(sort: Desc)])
+  @@index([businessId, managedBusinessId, sentiment])
   @@unique([businessId, source, externalRef])
 }
 
@@ -104,6 +110,9 @@ model Alert {
   createdAt   DateTime      @default(now())
 
   @@index([businessId, createdAt(sort: Desc)])
+  @@index([businessId, managedBusinessId, createdAt(sort: Desc)])
+  @@index([businessId, isRead, createdAt(sort: Desc)])
+  @@index([businessId, managedBusinessId, isRead])
 }
 
 model SourceConnection {
@@ -151,6 +160,7 @@ model BusinessSettings {
   aiProvider         String   @default("gemini")
   sentimentModel     String   @default("balanced")
   analysisLanguage   String   @default("en")
+  businessContext    String?
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 }

@@ -1,19 +1,28 @@
 import type { Metadata } from "next";
 import { ClerkProvider } from "@clerk/nextjs";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Geist_Mono, Inter, Playfair_Display } from "next/font/google";
 import { AppQueryProvider } from "@/components/providers/query-provider";
 import "./globals.css";
 import { dark } from '@clerk/ui/themes'
 
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
+const inter = Inter({
+  variable: "--font-inter",
   subsets: ["latin"],
+  display: "swap",
 });
 
 const geistMono = Geist_Mono({
   variable: "--font-geist-mono",
   subsets: ["latin"],
+  display: "swap",
+});
+
+const playfair = Playfair_Display({
+  variable: "--font-playfair",
+  subsets: ["latin"],
+  weight: ["600", "700"],
+  display: "swap",
 });
 
 export const metadata: Metadata = {
@@ -32,7 +41,7 @@ export default function RootLayout({
    }}>
       <html lang="en">
         <body
-          className={`${geistSans.variable} ${geistMono.variable} antialiased`}
+          className={`${inter.variable} ${playfair.variable} ${geistMono.variable} antialiased`}
         >
           <AppQueryProvider>{children}</AppQueryProvider>
         </body>

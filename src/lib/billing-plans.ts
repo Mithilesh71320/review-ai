@@ -1,12 +1,7 @@
-
-export type TrialOption = {
-  days: 7 | 14 | 30;
-  label: string;
-  description: string;
-};
+export type BillingPlanKey = "starter" | "growth" | "pro";
 
 export type BillingPlan = {
-  key: "free" | "starter" | "growth" | "pro";
+  key: BillingPlanKey;
   name: string;
   description: string;
   price: number;
@@ -15,65 +10,107 @@ export type BillingPlan = {
   features: string[];
   cta: string;
   popular?: boolean;
+  limits: {
+    maxBusinesses: number | null;
+    maxStoredReviews: number | null;
+  };
+  capabilities: {
+    aiResponses: boolean;
+    advancedAiRecommendations: boolean;
+    businessContext: boolean;
+    reviewNotifications: boolean;
+    dedicatedSupport: boolean;
+  };
 };
-
-export const trialOptions: TrialOption[] = [
-  { days: 7, label: "7 days", description: "Short product demo trial" },
-  { days: 14, label: "14 days", description: "Default trial for new teams" },
-  { days: 30, label: "1 month", description: "Extended trial for larger businesses" },
-];
-
-export const defaultTrialDays = 14;
 
 export const defaultBillingPlans: BillingPlan[] = [
   {
-    key: "free",
-    name: "Free Plan",
-    description: "For testing ReviewAI with one business.",
-    price: 0,
-    currency: "USD",
-    period: "month",
-    features: ["1 business", "50 stored reviews", "Basic dashboard", "Manual refresh"],
-    cta: "Current starter plan",
-  },
-  {
     key: "starter",
     name: "Starter",
-    description: "For solo salons and small local businesses.",
-    price: 29,
+    description: "For solo operators who need fast review response workflows.",
+    price: 19,
     currency: "USD",
     period: "month",
-    features: ["3 businesses", "500 reviews/mo", "AI responses", "Email support"],
-    cta: "Start free trial",
+    features: [
+      "2 businesses",
+      "100 stored reviews",
+      "AI responses",
+      "Review notifications",
+    ],
+    cta: "Subscribe",
+    limits: {
+      maxBusinesses: 2,
+      maxStoredReviews: 100,
+    },
+    capabilities: {
+      aiResponses: true,
+      advancedAiRecommendations: false,
+      businessContext: false,
+      reviewNotifications: true,
+      dedicatedSupport: false,
+    },
   },
   {
     key: "growth",
     name: "Growth",
-    description: "For growing teams managing multiple locations.",
-    price: 79,
+    description:
+      "For growing teams managing several locations and deeper review analysis.",
+    price: 29,
     currency: "USD",
     period: "month",
-    features: ["10 businesses", "2000 reviews/mo", "Advanced AI", "Priority support"],
-    cta: "Start free trial",
+    features: [
+      "5 businesses",
+      "500 stored reviews",
+      "Advanced AI recommendation",
+      "Review notifications",
+    ],
+    cta: "Subscribe",
     popular: true,
+    limits: {
+      maxBusinesses: 5,
+      maxStoredReviews: 500,
+    },
+    capabilities: {
+      aiResponses: true,
+      advancedAiRecommendations: true,
+      businessContext: false,
+      reviewNotifications: true,
+      dedicatedSupport: false,
+    },
   },
   {
     key: "pro",
     name: "Pro",
-    description: "For agencies and multi-location operators.",
-    price: 199,
+    description:
+      "For agencies or multi-location brands that want unlimited scale and richer AI context.",
+    price: 49,
     currency: "USD",
     period: "month",
-    features: ["Unlimited businesses", "Unlimited reviews", "Custom AI", "Dedicated support"],
-    cta: "Start free trial",
+    features: [
+      "Unlimited businesses",
+      "Unlimited stored reviews",
+      "Add business context to AI",
+      "Review notifications",
+      "Dedicated support",
+    ],
+    cta: "Subscribe",
+    limits: {
+      maxBusinesses: null,
+      maxStoredReviews: null,
+    },
+    capabilities: {
+      aiResponses: true,
+      advancedAiRecommendations: true,
+      businessContext: true,
+      reviewNotifications: true,
+      dedicatedSupport: true,
+    },
   },
 ];
 
-export function formatPlanPrice(plan: BillingPlan) {
-  if (plan.price === 0) {
-    return "$0";
-  }
+const billingPlanMap = new Map(defaultBillingPlans.map((plan) => [plan.key, plan]));
 
+export function formatPlanPrice(plan: BillingPlan) {
   return new Intl.NumberFormat("en-US", {
     style: "currency",
     currency: plan.currency,
@@ -82,7 +119,13 @@ export function formatPlanPrice(plan: BillingPlan) {
 }
 
 export function getBillingPlans() {
-  // Future admin dashboard can replace this with an API/database backed source.
   return defaultBillingPlans;
 }
 
+export function getBillingPlanByKey(planKey: BillingPlanKey | null | undefined) {
+  if (!planKey) {
+    return null;
+  }
+
+  return billingPlanMap.get(planKey) ?? null;
+}

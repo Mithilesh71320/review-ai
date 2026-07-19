@@ -41,3 +41,27 @@ yarn-error.log*
 next-env.d.ts
 
 /src/generated/prisma
+
+# local agent tooling
+.grok/
+.agents/
+.claude/
+.kilo/
+.kilocode/
+.cursor/
+skills/
+skills-lock.json
+
+# agent rules / design instructions
+AGENTS.md
+AI-SETUP.md
+DESIGN.md
+.clauderules
+.cursorrules
+.geminirules
+.github/copilot-instructions.md
+
+# setup notes from AI tooling video
+transcript.md
+suggestion.md
+

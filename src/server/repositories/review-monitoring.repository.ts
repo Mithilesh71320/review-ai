@@ -3,6 +3,7 @@ import {
   Prisma,
   ReviewSource,
   type AlertSeverity,
+  type Sentiment,
 } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
 
@@ -39,73 +40,334 @@ const allSources: ReviewSource[] = [
   "TRIPADVISOR",
 ];
 
+const workspaceInclude = {
+  settings: true,
+  sources: true,
+  rules: true,
+  managedBusinesses: {
+    orderBy: { createdAt: "asc" as const },
+  },
+} satisfies Prisma.BusinessInclude;
+
+type Workspace = Prisma.BusinessGetPayload<{ include: typeof workspaceInclude }>;
+
+/** Short in-process cache to skip repeated bootstrap on warm Neon. */
+const workspaceCache = new Map<string, { expiresAt: number; value: Workspace }>();
+const WORKSPACE_CACHE_TTL_MS = 30_000;
+
+function reviewScope(businessId: string, managedBusinessId?: string) {
+  return {
+    businessId,
+    ...(managedBusinessId ? { managedBusinessId } : {}),
+  };
+}
+
+type PageOptions = {
+  take: number;
+  cursor?: string;
+};
+
 export class ReviewMonitoringRepository {
-  async ensureWorkspace(userId: string) {
-    const business = await prisma.business.upsert({
+  /**
+   * Fast path: single SELECT with relations when workspace already exists.
+   * Bootstrap only runs for brand-new users (or incomplete workspaces).
+   */
+  async ensureWorkspace(userId: string): Promise<Workspace> {
+    const cached = workspaceCache.get(userId);
+    if (cached && cached.expiresAt > Date.now()) {
+      return cached.value;
+    }
+
+    const existing = await prisma.business.findUnique({
       where: { userId },
-      update: {},
-      create: {
-        userId,
-        name: "My Business",
-      },
+      include: workspaceInclude,
     });
 
-    await prisma.businessSettings.upsert({
-      where: { businessId: business.id },
-      update: {},
-      create: { businessId: business.id },
-    });
+    if (
+      existing?.settings &&
+      existing.sources.length >= allSources.length &&
+      existing.rules.length >= Object.keys(defaultRules).length
+    ) {
+      workspaceCache.set(userId, {
+        value: existing,
+        expiresAt: Date.now() + WORKSPACE_CACHE_TTL_MS,
+      });
+      return existing;
+    }
 
-    await prisma.sourceConnection.createMany({
-      data: allSources.map((source) => ({
-        businessId: business.id,
-        source,
-        connected: source === "GOOGLE",
-      })),
-      skipDuplicates: true,
-    });
+    const business = existing
+      ? existing
+      : await prisma.business.create({
+          data: { userId, name: "My Business" },
+        });
 
-    await prisma.alertRule.createMany({
-      data: (Object.keys(defaultRules) as AlertType[]).map((type) => ({
-        businessId: business.id,
-        type,
-        name: defaultRules[type].name,
-        description: defaultRules[type].description,
-        enabled: defaultRules[type].enabled,
-      })),
-      skipDuplicates: true,
-    });
+    await Promise.all([
+      prisma.businessSettings.upsert({
+        where: { businessId: business.id },
+        update: {},
+        create: { businessId: business.id },
+      }),
+      prisma.sourceConnection.createMany({
+        data: allSources.map((source) => ({
+          businessId: business.id,
+          source,
+          connected: source === "GOOGLE",
+        })),
+        skipDuplicates: true,
+      }),
+      prisma.alertRule.createMany({
+        data: (Object.keys(defaultRules) as AlertType[]).map((type) => ({
+          businessId: business.id,
+          type,
+          name: defaultRules[type].name,
+          description: defaultRules[type].description,
+          enabled: defaultRules[type].enabled,
+        })),
+        skipDuplicates: true,
+      }),
+    ]);
 
-    return prisma.business.findUniqueOrThrow({
+    const workspace = await prisma.business.findUniqueOrThrow({
       where: { id: business.id },
-      include: {
-        settings: true,
-        sources: true,
-        rules: true,
-        managedBusinesses: {
-          orderBy: { createdAt: "asc" },
-        },
-      },
+      include: workspaceInclude,
     });
+
+    workspaceCache.set(userId, {
+      value: workspace,
+      expiresAt: Date.now() + WORKSPACE_CACHE_TTL_MS,
+    });
+    return workspace;
   }
 
-  async listReviews(businessId: string, managedBusinessId?: string) {
+  /** Lightweight id lookup — avoids loading relations when only businessId is needed. */
+  async getOrCreateBusinessId(userId: string): Promise<string> {
+    const existing = await prisma.business.findUnique({
+      where: { userId },
+      select: { id: true },
+    });
+    if (existing) return existing.id;
+    const workspace = await this.ensureWorkspace(userId);
+    return workspace.id;
+  }
+
+  invalidateWorkspaceCache(userId: string) {
+    workspaceCache.delete(userId);
+  }
+
+  async listReviews(
+    businessId: string,
+    managedBusinessId?: string,
+    options?: { take?: number; selectLight?: boolean },
+  ) {
+    const take = options?.take;
     return prisma.review.findMany({
-      where: {
-        businessId,
-        ...(managedBusinessId ? { managedBusinessId } : {}),
-      },
+      where: reviewScope(businessId, managedBusinessId),
       orderBy: { createdAt: "desc" },
+      ...(take != null ? { take } : {}),
+      ...(options?.selectLight
+        ? {
+            select: {
+              id: true,
+              author: true,
+              text: true,
+              rating: true,
+              sentiment: true,
+              source: true,
+              createdAt: true,
+              reviewResourceName: true,
+              reviewReply: true,
+              reviewRepliedAt: true,
+            },
+          }
+        : {}),
     });
   }
 
-  async listAlerts(businessId: string, managedBusinessId?: string) {
-    return prisma.alert.findMany({
-      where: {
-        businessId,
-        ...(managedBusinessId ? { managedBusinessId } : {}),
+  async listReviewsPage(
+    businessId: string,
+    managedBusinessId: string | undefined,
+    options: PageOptions,
+  ) {
+    return prisma.review.findMany({
+      where: reviewScope(businessId, managedBusinessId),
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      take: options.take,
+      ...(options.cursor ? { cursor: { id: options.cursor }, skip: 1 } : {}),
+      select: {
+        id: true,
+        author: true,
+        text: true,
+        rating: true,
+        sentiment: true,
+        source: true,
+        createdAt: true,
+        reviewResourceName: true,
+        reviewReply: true,
+        reviewRepliedAt: true,
       },
+    });
+  }
+
+  async listRecentReviews(businessId: string, managedBusinessId: string | undefined, take = 8) {
+    return prisma.review.findMany({
+      where: reviewScope(businessId, managedBusinessId),
       orderBy: { createdAt: "desc" },
+      take,
+      select: {
+        id: true,
+        text: true,
+        rating: true,
+        sentiment: true,
+        createdAt: true,
+      },
+    });
+  }
+
+  /**
+   * Dashboard stats via SQL aggregates — never loads full review rows.
+   */
+  async getDashboardMetrics(
+    businessId: string,
+    managedBusinessId?: string,
+    trendDays = 30,
+  ) {
+    const scope = reviewScope(businessId, managedBusinessId);
+    const now = new Date();
+    const startOfDay = new Date(now);
+    startOfDay.setHours(0, 0, 0, 0);
+    const sevenDaysAgo = new Date(now);
+    sevenDaysAgo.setDate(now.getDate() - 7);
+    const fourteenDaysAgo = new Date(now);
+    fourteenDaysAgo.setDate(now.getDate() - 14);
+    const trendStart = new Date(now);
+    trendStart.setDate(now.getDate() - trendDays + 1);
+    trendStart.setHours(0, 0, 0, 0);
+
+    const [
+      totalAgg,
+      newToday,
+      last7Days,
+      prev7Days,
+      sentimentGroups,
+      activeAlerts,
+      negativeToday,
+      recentReviews,
+      trendRows,
+      sentimentTodayGroups,
+    ] = await Promise.all([
+      prisma.review.aggregate({
+        where: scope,
+        _count: { _all: true },
+        _avg: { rating: true },
+      }),
+      prisma.review.count({
+        where: { ...scope, createdAt: { gte: startOfDay } },
+      }),
+      prisma.review.count({
+        where: { ...scope, createdAt: { gte: sevenDaysAgo } },
+      }),
+      prisma.review.count({
+        where: {
+          ...scope,
+          createdAt: { gte: fourteenDaysAgo, lt: sevenDaysAgo },
+        },
+      }),
+      prisma.review.groupBy({
+        by: ["sentiment"],
+        where: scope,
+        _count: { _all: true },
+      }),
+      prisma.alert.count({
+        where: { ...scope, isRead: false },
+      }),
+      prisma.alert.count({
+        where: {
+          ...scope,
+          isRead: false,
+          type: "NEGATIVE_REVIEW",
+          createdAt: { gte: startOfDay },
+        },
+      }),
+      this.listRecentReviews(businessId, managedBusinessId, 8),
+      prisma.review.findMany({
+        where: { ...scope, createdAt: { gte: trendStart } },
+        select: { rating: true, createdAt: true },
+        orderBy: { createdAt: "asc" },
+      }),
+      prisma.review.groupBy({
+        by: ["sentiment"],
+        where: { ...scope, createdAt: { gte: startOfDay } },
+        _count: { _all: true },
+      }),
+    ]);
+
+    const sentimentCount: Record<Sentiment, number> = {
+      POSITIVE: 0,
+      NEUTRAL: 0,
+      NEGATIVE: 0,
+    };
+    for (const row of sentimentGroups) {
+      sentimentCount[row.sentiment] = row._count._all;
+    }
+
+    const sentimentToday: Record<Sentiment, number> = {
+      POSITIVE: 0,
+      NEUTRAL: 0,
+      NEGATIVE: 0,
+    };
+    for (const row of sentimentTodayGroups) {
+      sentimentToday[row.sentiment] = row._count._all;
+    }
+
+    return {
+      now,
+      startOfDay,
+      totalReviews: totalAgg._count._all,
+      averageRating: totalAgg._avg.rating ?? 0,
+      newToday,
+      last7Days,
+      prev7Days,
+      weekDelta: last7Days - prev7Days,
+      sentimentCount,
+      sentimentToday,
+      activeAlerts,
+      negativeToday,
+      recentReviews,
+      trendRows,
+    };
+  }
+
+  async listAlerts(
+    businessId: string,
+    managedBusinessId?: string,
+    options?: { take?: number },
+  ) {
+    return prisma.alert.findMany({
+      where: reviewScope(businessId, managedBusinessId),
+      orderBy: { createdAt: "desc" },
+      take: options?.take ?? 100,
+    });
+  }
+
+  async listAlertsPage(
+    businessId: string,
+    managedBusinessId: string | undefined,
+    options: PageOptions,
+  ) {
+    return prisma.alert.findMany({
+      where: reviewScope(businessId, managedBusinessId),
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      take: options.take,
+      ...(options.cursor ? { cursor: { id: options.cursor }, skip: 1 } : {}),
+    });
+  }
+
+  async countUnreadAlerts(businessId: string, managedBusinessId?: string) {
+    return prisma.alert.count({
+      where: {
+        ...reviewScope(businessId, managedBusinessId),
+        isRead: false,
+      },
     });
   }
 
@@ -116,6 +378,19 @@ export class ReviewMonitoringRepository {
     });
   }
 
+  async getFirstManagedBusiness(businessId: string) {
+    return prisma.managedBusiness.findFirst({
+      where: { businessId },
+      orderBy: { createdAt: "asc" },
+    });
+  }
+
+  async countReviews(businessId: string) {
+    return prisma.review.count({
+      where: { businessId },
+    });
+  }
+
   async getManagedBusiness(businessId: string, managedBusinessId: string) {
     return prisma.managedBusiness.findFirst({
       where: {
@@ -123,6 +398,14 @@ export class ReviewMonitoringRepository {
         businessId,
       },
     });
+  }
+
+  async resolveSelectedManagedBusiness(businessId: string, managedBusinessId?: string) {
+    if (managedBusinessId) {
+      const selected = await this.getManagedBusiness(businessId, managedBusinessId);
+      if (selected) return selected;
+    }
+    return this.getFirstManagedBusiness(businessId);
   }
 
   async upsertManagedBusinesses(
@@ -147,31 +430,30 @@ export class ReviewMonitoringRepository {
       }))
       .filter((item) => item.name && item.placeId);
 
-    const records = [];
-    for (const item of normalized) {
-      const record = await prisma.managedBusiness.upsert({
-        where: item.id ? { id: item.id } : { placeId: item.placeId },
-        update: {
-          name: item.name,
-          placeId: item.placeId,
-          accountName: item.accountName,
-          locationName: item.locationName,
-          mapsUri: item.mapsUri,
-          businessId,
-        },
-        create: {
-          businessId,
-          name: item.name,
-          placeId: item.placeId,
-          accountName: item.accountName,
-          locationName: item.locationName,
-          mapsUri: item.mapsUri,
-        },
-      });
-      records.push(record);
-    }
-
-    return records;
+    // Parallel upserts instead of sequential loop
+    return Promise.all(
+      normalized.map((item) =>
+        prisma.managedBusiness.upsert({
+          where: item.id ? { id: item.id } : { placeId: item.placeId },
+          update: {
+            name: item.name,
+            placeId: item.placeId,
+            accountName: item.accountName,
+            locationName: item.locationName,
+            mapsUri: item.mapsUri,
+            businessId,
+          },
+          create: {
+            businessId,
+            name: item.name,
+            placeId: item.placeId,
+            accountName: item.accountName,
+            locationName: item.locationName,
+            mapsUri: item.mapsUri,
+          },
+        }),
+      ),
+    );
   }
 
   async listAlertRules(businessId: string) {
@@ -281,32 +563,33 @@ export class ReviewMonitoringRepository {
         aiProvider: string;
         sentimentModel: string;
         analysisLanguage: string;
+        businessContext: string | null;
       };
       sources: Array<{ source: ReviewSource; connected: boolean }>;
     },
   ) {
     await prisma.$transaction(async (tx) => {
-      await tx.business.update({
-        where: { id: businessId },
-        data: data.business,
-      });
-
-      await tx.businessSettings.update({
-        where: { businessId },
-        data: data.settings,
-      });
-
-      for (const source of data.sources) {
-        await tx.sourceConnection.update({
-          where: {
-            businessId_source: {
-              businessId,
-              source: source.source,
+      await Promise.all([
+        tx.business.update({
+          where: { id: businessId },
+          data: data.business,
+        }),
+        tx.businessSettings.update({
+          where: { businessId },
+          data: data.settings,
+        }),
+        ...data.sources.map((source) =>
+          tx.sourceConnection.update({
+            where: {
+              businessId_source: {
+                businessId,
+                source: source.source,
+              },
             },
-          },
-          data: { connected: source.connected },
-        });
-      }
+            data: { connected: source.connected },
+          }),
+        ),
+      ]);
     });
   }
 
@@ -374,6 +657,9 @@ export class ReviewMonitoringRepository {
     text: string;
     rating: number;
     sentiment: Prisma.ReviewCreateInput["sentiment"];
+    sentimentConfidence?: number | null;
+    sentimentReason?: string | null;
+    reviewTags?: string[] | null;
     source: ReviewSource;
     externalRef: string;
     reviewResourceName?: string | null;
@@ -381,6 +667,17 @@ export class ReviewMonitoringRepository {
     reviewRepliedAt?: Date | null;
     createdAt: Date;
   }) {
+    const extraFields: Record<string, unknown> = {};
+    if (input.sentimentConfidence != null) {
+      extraFields.sentimentConfidence = input.sentimentConfidence;
+    }
+    if (input.sentimentReason != null) {
+      extraFields.sentimentReason = input.sentimentReason;
+    }
+    if (input.reviewTags != null) {
+      extraFields.reviewTags = input.reviewTags;
+    }
+
     return prisma.review.upsert({
       where: {
         businessId_source_externalRef: {
@@ -398,7 +695,8 @@ export class ReviewMonitoringRepository {
         reviewResourceName: input.reviewResourceName,
         reviewReply: input.reviewReply,
         reviewRepliedAt: input.reviewRepliedAt,
-      },
+        ...extraFields,
+      } as Prisma.ReviewUncheckedUpdateInput,
       create: {
         businessId: input.businessId,
         managedBusinessId: input.managedBusinessId,
@@ -412,7 +710,8 @@ export class ReviewMonitoringRepository {
         reviewReply: input.reviewReply,
         reviewRepliedAt: input.reviewRepliedAt,
         createdAt: input.createdAt,
-      },
+        ...extraFields,
+      } as Prisma.ReviewUncheckedCreateInput,
     });
   }
 

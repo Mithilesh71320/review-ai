@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import { reviewMonitoringService } from "@/server/services/review-monitoring.service";
+import { withApiLogger } from "@/lib/api-logger";
 
-export async function GET(req: Request) {
+export const GET = withApiLogger(async (req: Request) => {
   const { userId } = await auth();
 
   if (!userId) {
@@ -11,7 +12,12 @@ export async function GET(req: Request) {
 
   const { searchParams } = new URL(req.url);
   const managedBusinessId = searchParams.get("managedBusinessId") ?? undefined;
+  const trendDays = Number(searchParams.get("trendDays") ?? 30);
 
-  const data = await reviewMonitoringService.getDashboard(userId, managedBusinessId);
+  const data = await reviewMonitoringService.getDashboard(
+    userId,
+    managedBusinessId,
+    trendDays,
+  );
   return NextResponse.json(data);
-}
+});
