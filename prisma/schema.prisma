@@ -1,7 +1,7 @@
 generator client {
-  provider = "prisma-client"
-  output   = "../src/generated/prisma"
-  // native = local Windows/macOS; rhel-openssl-3.0.x = Vercel/AWS Linux runtimes
+  // Default @prisma/client location (node_modules) — reliable on Vercel.
+  // Custom src/generated output often fails to load the Linux query engine at runtime.
+  provider      = "prisma-client-js"
   binaryTargets = ["native", "rhel-openssl-3.0.x"]
 }
 

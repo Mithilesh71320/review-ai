@@ -1,4 +1,4 @@
-import type { AlertSeverity, Sentiment } from "@/generated/prisma/client";
+import type { AlertSeverity, Sentiment } from "@prisma/client";
 
 /**
  * Rule-based review tagging used for UI filters + AI insight context.

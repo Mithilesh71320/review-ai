@@ -1,4 +1,4 @@
-import type { ReviewSource } from "@/generated/prisma/client";
+import type { ReviewSource } from "@prisma/client";
 
 /** Body shape for PUT /api/settings */
 export type SettingsPayload = {

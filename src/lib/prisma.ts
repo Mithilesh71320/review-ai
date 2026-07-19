@@ -1,13 +1,11 @@
-import { PrismaClient } from "@/generated/prisma/client";
+import { PrismaClient } from "@prisma/client";
 
 const globalForPrisma = globalThis as unknown as {
   prisma: PrismaClient | undefined;
 };
 
 function createPrismaClient() {
-  const url = process.env.DATABASE_URL;
-  if (!url) {
-    // Fail clearly in production logs instead of a vague Prisma init crash.
+  if (!process.env.DATABASE_URL) {
     console.error("[prisma] DATABASE_URL is not set");
   }
 
@@ -16,6 +14,10 @@ function createPrismaClient() {
   });
 }
 
+/**
+ * Singleton Prisma client for Next.js / Vercel serverless.
+ * Reuses the client across warm invocations in the same isolate.
+ */
 export const prisma = globalForPrisma.prisma ?? createPrismaClient();
 
 if (process.env.NODE_ENV !== "production") {
