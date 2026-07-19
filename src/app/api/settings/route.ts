@@ -4,6 +4,7 @@ import { type ReviewSource } from "@/generated/prisma/client";
 import { resolveSubscriptionAccessForUser } from "@/lib/billing-access";
 import { reviewMonitoringService } from "@/server/services/review-monitoring.service";
 import { withApiLogger } from "@/lib/api-logger";
+import { logger } from "@/lib/logger";
 
 export const GET = withApiLogger(async () => {
   const authData = await auth();
@@ -13,12 +14,41 @@ export const GET = withApiLogger(async () => {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const access = await resolveSubscriptionAccessForUser({
-    userId,
-    has: authData.has,
-  });
-  const data = await reviewMonitoringService.getSettings(userId, access);
-  return NextResponse.json(data);
+  try {
+    const access = await resolveSubscriptionAccessForUser({
+      userId,
+      has: authData.has,
+    });
+    const data = await reviewMonitoringService.getSettings(userId, access);
+    return NextResponse.json(data);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to load settings.";
+    logger.error(
+      {
+        route: "GET /api/settings",
+        userId,
+        error: message,
+        stack: error instanceof Error ? error.stack : undefined,
+        hasDatabaseUrl: Boolean(process.env.DATABASE_URL),
+      },
+      "settings GET failed",
+    );
+
+    // Surface actionable hints for common deploy misconfigurations
+    const isDbConfig =
+      !process.env.DATABASE_URL ||
+      /database|prisma|p1001|p1000|p1017|connect|timeout|env/i.test(message);
+
+    return NextResponse.json(
+      {
+        error: isDbConfig
+          ? "Database unavailable. Check DATABASE_URL on Vercel and that migrations are applied."
+          : "Failed to load settings.",
+        ...(process.env.NODE_ENV !== "production" ? { detail: message } : {}),
+      },
+      { status: 500 },
+    );
+  }
 });
 
 export const PUT = withApiLogger(async (req: Request) => {
