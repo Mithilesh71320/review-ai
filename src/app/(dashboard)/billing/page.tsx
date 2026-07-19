@@ -1,5 +1,6 @@
 "use client";
 
+import { Suspense } from "react";
 import { PricingTable } from "@clerk/nextjs";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
@@ -9,7 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { getBillingPlans } from "@/lib/billing-plans";
 
-export default function BillingPage() {
+function BillingPageContent() {
   const plans = getBillingPlans();
   const searchParams = useSearchParams();
   const returnTo = searchParams.get("returnTo") || "/dashboard";
@@ -101,5 +102,27 @@ export default function BillingPage() {
         <BillingPlanCards plans={plans} ctaHref="#clerk-pricing" />
       </section>
     </div>
+  );
+}
+
+function BillingFallback() {
+  return (
+    <div className="space-y-6">
+      <div className="h-24 animate-pulse rounded-2xl bg-[#E7E5E4]/60" />
+      <div className="h-40 animate-pulse rounded-2xl bg-[#E7E5E4]/40" />
+      <div className="h-64 animate-pulse rounded-2xl bg-[#E7E5E4]/40" />
+    </div>
+  );
+}
+
+/**
+ * useSearchParams() requires a Suspense boundary for static prerender / Vercel builds.
+ * @see https://nextjs.org/docs/messages/missing-suspense-with-csr-bailout
+ */
+export default function BillingPage() {
+  return (
+    <Suspense fallback={<BillingFallback />}>
+      <BillingPageContent />
+    </Suspense>
   );
 }

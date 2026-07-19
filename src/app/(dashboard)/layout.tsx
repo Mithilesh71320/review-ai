@@ -1,4 +1,5 @@
-﻿import { Menu } from "lucide-react";
+import { Suspense } from "react";
+import { Menu } from "lucide-react";
 import { AppSidebar } from "@/components/app-sidebar";
 import { DashboardHeaderControls } from "@/components/dashboard-header-controls";
 import { DashboardPrefetcher } from "@/components/providers/dashboard-prefetcher";
@@ -19,7 +20,10 @@ export default function DashboardLayout({
             <Menu className="h-5 w-5" />
           </Button>
           <div className="hidden md:block" />
-          <DashboardHeaderControls />
+          {/* Header uses useSearchParams — must be under Suspense for prerender. */}
+          <Suspense fallback={<div className="h-8 w-24 animate-pulse rounded-md bg-[#E7E5E4]/60" />}>
+            <DashboardHeaderControls />
+          </Suspense>
         </header>
         <main className="flex-1 overflow-auto bg-[#F8F6F1] p-4 md:p-8">
           {children}
